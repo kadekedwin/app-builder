@@ -82,8 +82,8 @@ export default {
 
 Bluetooth is split by protocol end-to-end (service, repository, IPC, and UI):
 
-- BLE service: `electron/services/bluetooth/ble-service.ts`
-- Classic service: `electron/services/bluetooth/classic-service.ts`
+- BLE service: `electron/services/ble-bluetooth-service.ts`
+- Classic service: `electron/services/classic-bluetooth-service.ts`
 - BLE repository: `electron/repositories/BleBluetoothRepository.ts`
 - Classic repository: `electron/repositories/ClassicBluetoothRepository.ts`
 - BLE IPC: `electron/ipc/bluetooth-ble.ts`
@@ -122,6 +122,7 @@ On macOS, Classic runs in info-only mode (list known/paired/connected devices) a
 - `scan.stop`
 - `device.connect` payload: `{ "id": "device-id" }`
 - `device.disconnect` payload: `{ "id": "device-id" }`
+- `data.send` payload: `{ "id": "device-id", "serviceUuid": "....", "characteristicUuid": "....", "content": "text", "encoding": "utf8|hex|base64", "withResponse": true, "chunkSize": 180, "appendNewline": false }` (BLE GATT write)
 
 ### Supported Classic actions
 
@@ -132,8 +133,7 @@ On macOS, Classic runs in info-only mode (list known/paired/connected devices) a
 - `scan.stop`
 - `device.connect` payload: `{ "id": "device-id" }`
 - `device.disconnect` payload: `{ "id": "device-id" }`
-- `printers.list` (`classic` only)
-- `printer.print` payload: `{ "content": "text to print", "printer": "optional-printer-name", "title": "optional-job-title" }` (`classic` only)
+- `data.send` payload: `{ "id": "device-id", "content": "text", "encoding": "utf8|hex|base64" }` (Classic RFCOMM write; not supported in macOS fallback mode)
 
 ### Minimal renderer example
 
@@ -164,4 +164,5 @@ It includes buttons for:
 
 - `scan.start`, `scan.stop`, `devices.list`, `device.connect`, `device.disconnect`
 - pair helper guidance
-- `printers.list`, `printer.print` (classic endpoint)
+- `data.send` for BLE (requires service/characteristic UUIDs)
+- `data.send` for Classic (RFCOMM)

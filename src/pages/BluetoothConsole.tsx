@@ -21,12 +21,6 @@ interface DeviceItem {
   connected: boolean;
 }
 
-interface PrinterItem {
-  name: string;
-  status: string;
-  isDefault: boolean;
-}
-
 interface ActionResponse {
   ok: boolean;
   endpoint: 'ble' | 'classic';
@@ -53,11 +47,14 @@ export default function BluetoothConsole() {
 
   const [allowDuplicates, setAllowDuplicates] = useState(true);
   const [serviceUuids, setServiceUuids] = useState('');
-
-  const [printers, setPrinters] = useState<PrinterItem[]>([]);
-  const [printerName, setPrinterName] = useState('');
-  const [printTitle, setPrintTitle] = useState('Bluetooth Test');
-  const [printContent, setPrintContent] = useState('Hello from App Builder');
+  const [bleDataServiceUuid, setBleDataServiceUuid] = useState('');
+  const [bleDataCharacteristicUuid, setBleDataCharacteristicUuid] = useState('');
+  const [bleDataEncoding, setBleDataEncoding] = useState<'utf8' | 'hex' | 'base64'>('utf8');
+  const [bleDataWithResponse, setBleDataWithResponse] = useState(true);
+  const [bleDataChunkSize, setBleDataChunkSize] = useState('180');
+  const [bleDataContent, setBleDataContent] = useState('Hello from BLE device');
+  const [classicDataEncoding, setClassicDataEncoding] = useState<'utf8' | 'hex' | 'base64'>('utf8');
+  const [classicDataContent, setClassicDataContent] = useState('Hello from Classic device');
 
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -113,9 +110,6 @@ export default function BluetoothConsole() {
         if (action === 'status.get') {
           setClassicStatus(response.payload ?? null);
         }
-        if (action === 'printers.list' && isPrinterPayload(response.payload)) {
-          setPrinters(response.payload.printers);
-        }
       }
       return response;
     } finally {
@@ -153,6 +147,35 @@ export default function BluetoothConsole() {
     void invokeBle('device.disconnect', { id: bleSelectedDeviceId });
   };
 
+  const onBleSendData = () => {
+    if (!bleSelectedDeviceId) {
+      alert('Select BLE device first.');
+      return;
+    }
+    if (!bleDataServiceUuid.trim() || !bleDataCharacteristicUuid.trim()) {
+      alert('Fill BLE service UUID and characteristic UUID.');
+      return;
+    }
+    if (!bleDataContent.trim()) {
+      alert('BLE data payload cannot be empty.');
+      return;
+    }
+
+    const parsedChunkSize = Number.parseInt(bleDataChunkSize, 10);
+    const chunkSize =
+      Number.isFinite(parsedChunkSize) && parsedChunkSize > 0 ? parsedChunkSize : undefined;
+
+    void invokeBle('data.send', {
+      id: bleSelectedDeviceId,
+      serviceUuid: bleDataServiceUuid.trim(),
+      characteristicUuid: bleDataCharacteristicUuid.trim(),
+      content: bleDataContent,
+      encoding: bleDataEncoding,
+      withResponse: bleDataWithResponse,
+      chunkSize,
+    });
+  };
+
   const onClassicConnect = () => {
     if (!classicSelectedDeviceId) {
       alert('Select Classic device first.');
@@ -171,16 +194,20 @@ export default function BluetoothConsole() {
     void invokeClassic('device.disconnect', { id: classicSelectedDeviceId });
   };
 
-  const onClassicPrint = () => {
-    if (!printContent.trim()) {
-      alert('Print content cannot be empty.');
+  const onClassicSendData = () => {
+    if (!classicSelectedDeviceId) {
+      alert('Select Classic device first.');
+      return;
+    }
+    if (!classicDataContent.trim()) {
+      alert('Classic data payload cannot be empty.');
       return;
     }
 
-    void invokeClassic('printer.print', {
-      content: printContent,
-      printer: printerName || undefined,
-      title: printTitle || 'Bluetooth Test',
+    void invokeClassic('data.send', {
+      id: classicSelectedDeviceId,
+      content: classicDataContent,
+      encoding: classicDataEncoding,
     });
   };
 
@@ -317,6 +344,72 @@ export default function BluetoothConsole() {
               <Unplug size={15} /> Disconnect
             </button>
           </div>
+
+          <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '1rem', marginTop: '1rem' }}>
+            <h3 style={{ marginBottom: '0.6rem', fontSize: '1rem' }}>
+              <Printer size={16} style={{ display: 'inline', marginRight: 8 }} />
+              BLE Data Send (GATT Write)
+            </h3>
+            <input
+              type="text"
+              placeholder="BLE service UUID (required)"
+              value={bleDataServiceUuid}
+              onChange={(e) => setBleDataServiceUuid(e.target.value)}
+              style={{ marginBottom: '0.6rem' }}
+            />
+            <input
+              type="text"
+              placeholder="BLE characteristic UUID (required)"
+              value={bleDataCharacteristicUuid}
+              onChange={(e) => setBleDataCharacteristicUuid(e.target.value)}
+              style={{ marginBottom: '0.6rem' }}
+            />
+            <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
+              <label style={{ marginBottom: 0 }}>
+                Encoding
+                <select
+                  value={bleDataEncoding}
+                  onChange={(e) =>
+                    setBleDataEncoding(e.target.value as 'utf8' | 'hex' | 'base64')
+                  }
+                  style={{ padding: '0.6rem', borderRadius: 8, border: '1px solid var(--color-border)', marginLeft: 8 }}
+                >
+                  <option value="utf8">utf8</option>
+                  <option value="hex">hex</option>
+                  <option value="base64">base64</option>
+                </select>
+              </label>
+              <label style={{ marginBottom: 0 }}>
+                Chunk size
+                <input
+                  type="number"
+                  min={20}
+                  max={512}
+                  value={bleDataChunkSize}
+                  onChange={(e) => setBleDataChunkSize(e.target.value)}
+                  style={{ width: 100, marginLeft: 8 }}
+                />
+              </label>
+              <label style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={bleDataWithResponse}
+                  onChange={(e) => setBleDataWithResponse(e.target.checked)}
+                  style={{ width: 16, height: 16 }}
+                />
+                with response
+              </label>
+            </div>
+            <textarea
+              value={bleDataContent}
+              onChange={(e) => setBleDataContent(e.target.value)}
+              rows={4}
+              style={{ marginBottom: '0.6rem' }}
+            />
+            <button className="btn-primary" onClick={onBleSendData} disabled={isBusy('ble', 'data.send')}>
+              Send Data
+            </button>
+          </div>
         </div>
 
         <div style={{ background: 'white', border: '1px solid var(--color-border)', borderRadius: 12, padding: '1rem' }}>
@@ -373,36 +466,35 @@ export default function BluetoothConsole() {
           <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
             <h3 style={{ marginBottom: '0.6rem', fontSize: '1rem' }}>
               <Printer size={16} style={{ display: 'inline', marginRight: 8 }} />
-              Printer
+              Classic Data Send (RFCOMM)
             </h3>
-            <div className="bluetooth-printer-row">
-              <input
-                type="text"
-                placeholder="Printer name (optional)"
-                value={printerName}
-                onChange={(e) => setPrinterName(e.target.value)}
-              />
-              <button className="btn-secondary" onClick={() => void invokeClassic('printers.list')} disabled={isBusy('classic', 'printers.list')}>
-                List Printers
-              </button>
+            <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
+              <label style={{ marginBottom: 0 }}>
+                Encoding
+                <select
+                  value={classicDataEncoding}
+                  onChange={(e) =>
+                    setClassicDataEncoding(e.target.value as 'utf8' | 'hex' | 'base64')
+                  }
+                  style={{ padding: '0.6rem', borderRadius: 8, border: '1px solid var(--color-border)', marginLeft: 8 }}
+                >
+                  <option value="utf8">utf8</option>
+                  <option value="hex">hex</option>
+                  <option value="base64">base64</option>
+                </select>
+              </label>
             </div>
-            <input
-              type="text"
-              placeholder="Print title"
-              value={printTitle}
-              onChange={(e) => setPrintTitle(e.target.value)}
-              style={{ marginBottom: '0.6rem' }}
-            />
             <textarea
-              value={printContent}
-              onChange={(e) => setPrintContent(e.target.value)}
+              value={classicDataContent}
+              onChange={(e) => setClassicDataContent(e.target.value)}
               rows={4}
               style={{ marginBottom: '0.6rem' }}
             />
-            <button className="btn-primary" onClick={onClassicPrint} disabled={isBusy('classic', 'printer.print')}>
-              Print
+            <button className="btn-primary" onClick={onClassicSendData} disabled={isBusy('classic', 'data.send')}>
+              Send Data
             </button>
           </div>
+
         </div>
       </div>
 
@@ -416,22 +508,6 @@ export default function BluetoothConsole() {
         </div>
 
         <div style={{ background: 'white', border: '1px solid var(--color-border)', borderRadius: 12, padding: '1rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem' }}>Classic Printers</h3>
-          <div style={{ maxHeight: 180, overflow: 'auto', fontSize: '0.85rem', marginBottom: '0.8rem' }}>
-            {printers.length === 0 ? (
-              <div style={{ color: 'var(--color-text-secondary)' }}>No printers loaded</div>
-            ) : (
-              printers.map((printer) => (
-                <div key={printer.name} style={{ padding: '0.45rem 0', borderBottom: '1px solid var(--color-border)' }}>
-                  <div style={{ fontWeight: 600 }}>
-                    {printer.name} {printer.isDefault ? '(default)' : ''}
-                  </div>
-                  <div style={{ color: 'var(--color-text-secondary)' }}>{printer.status}</div>
-                </div>
-              ))
-            )}
-          </div>
-
           <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem' }}>Event / Action Log</h3>
           <div style={{ maxHeight: 280, overflow: 'auto', fontFamily: 'monospace', fontSize: '0.75rem', lineHeight: 1.45 }}>
             {logs.length === 0 ? (
@@ -518,17 +594,4 @@ function markDisconnected(list: DeviceItem[], id: string): DeviceItem[] {
 
 function fromUnknownDevices(value: unknown[]): DeviceItem[] {
   return value.filter(isDeviceLike).map(normalizeDevice);
-}
-
-function isPrinterPayload(value: unknown): value is { printers: PrinterItem[] } {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as { printers?: unknown };
-  if (!Array.isArray(candidate.printers)) return false;
-  return candidate.printers.every(
-    (item) =>
-      item &&
-      typeof item === 'object' &&
-      typeof (item as { name?: unknown }).name === 'string' &&
-      typeof (item as { status?: unknown }).status === 'string'
-  );
 }

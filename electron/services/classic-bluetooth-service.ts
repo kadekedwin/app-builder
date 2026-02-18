@@ -1,8 +1,5 @@
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { unlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 export interface ClassicActionRequest {
   action: string;
@@ -32,6 +29,18 @@ interface ScanOptions {
   serviceUuids: string[];
 }
 
+type DataEncoding = 'utf8' | 'base64' | 'hex';
+
+interface ClassicDataSendRequest {
+  deviceId: string;
+  data: Buffer;
+}
+
+interface ClassicDataSendResult {
+  id: string;
+  bytes: number;
+}
+
 interface AdapterStatus {
   adapter: 'classic' | 'unavailable';
   available: boolean;
@@ -52,6 +61,7 @@ interface ClassicAdapter {
   stopScan(): Promise<void>;
   connect(deviceId: string): Promise<BluetoothDeviceInfo>;
   disconnect(deviceId: string): Promise<void>;
+  sendData(request: ClassicDataSendRequest): Promise<ClassicDataSendResult>;
   destroy(): Promise<void>;
 }
 
@@ -101,6 +111,10 @@ class UnsupportedClassicAdapter implements ClassicAdapter {
     throw new CommandError('ADAPTER_UNAVAILABLE', this.message);
   }
 
+  async sendData(): Promise<ClassicDataSendResult> {
+    throw new CommandError('ADAPTER_UNAVAILABLE', this.message);
+  }
+
   async destroy(): Promise<void> {
     return Promise.resolve();
   }
@@ -125,6 +139,7 @@ interface ClassicSerialPortLike {
     success: () => void,
     failure: (error?: unknown) => void
   ): void;
+  write?(data: Buffer, callback?: (error?: unknown, bytesWritten?: number) => void): void;
   close(): void;
 }
 
@@ -246,6 +261,37 @@ class NodeBluetoothClassicAdapter implements ClassicAdapter {
 
     this.connections.delete(deviceId);
     this.updateDeviceConnection(deviceId, false);
+  }
+
+  async sendData(request: ClassicDataSendRequest): Promise<ClassicDataSendResult> {
+    if (!this.devices.has(request.deviceId)) {
+      throw new CommandError('DEVICE_NOT_FOUND', `Unknown device id "${request.deviceId}".`);
+    }
+
+    if (!this.connections.has(request.deviceId)) {
+      await this.connect(request.deviceId);
+    }
+
+    const port = this.connections.get(request.deviceId);
+    if (!port) {
+      throw new CommandError(
+        'CONNECT_FAILED',
+        `Cannot open classic connection for "${request.deviceId}".`
+      );
+    }
+
+    await this.writeToPort(port, request.data);
+
+    const result: ClassicDataSendResult = {
+      id: request.deviceId,
+      bytes: request.data.length,
+    };
+    this.emitEvent({
+      type: 'data.sent',
+      payload: result,
+    });
+
+    return result;
   }
 
   async destroy(): Promise<void> {
@@ -396,6 +442,30 @@ class NodeBluetoothClassicAdapter implements ClassicAdapter {
 
     return next;
   }
+
+  private async writeToPort(port: ClassicSerialPortLike, data: Buffer): Promise<void> {
+    if (typeof port.write !== 'function') {
+      throw new CommandError(
+        'UNSUPPORTED_ACTION',
+        'Classic adapter write is not available in this environment.'
+      );
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      port.write?.(data, (error?: unknown) => {
+        if (error) {
+          reject(
+            new CommandError(
+              'WRITE_FAILED',
+              error instanceof Error ? error.message : 'Classic write failed.'
+            )
+          );
+          return;
+        }
+        resolve();
+      });
+    });
+  }
 }
 
 class MacOSClassicInfoAdapter implements ClassicAdapter {
@@ -481,6 +551,13 @@ class MacOSClassicInfoAdapter implements ClassicAdapter {
     );
   }
 
+  async sendData(): Promise<ClassicDataSendResult> {
+    throw new CommandError(
+      'UNSUPPORTED_ACTION',
+      'Classic data.send is not supported in macOS fallback mode.'
+    );
+  }
+
   async destroy(): Promise<void> {
     return Promise.resolve();
   }
@@ -534,18 +611,9 @@ export class ClassicBluetoothService {
         await this.adapter.disconnect(deviceId);
         return { id: deviceId, disconnected: true };
       }
-      case 'printers.list': {
-        return listSystemPrinters();
-      }
-      case 'printer.print': {
-        const content = requirePayloadString(request.payload, 'content');
-        const printer = readPayloadOptionalString(request.payload, 'printer');
-        const title = readPayloadOptionalString(request.payload, 'title') ?? 'Bluetooth Print Job';
-        return printWithSystemPrinter({
-          content,
-          printer,
-          title,
-        });
+      case 'data.send': {
+        const sendRequest = parseClassicDataSendRequest(request.payload);
+        return this.adapter.sendData(sendRequest);
       }
       default: {
         throw new CommandError(
@@ -587,104 +655,6 @@ export class ClassicBluetoothService {
 }
 
 export const classicBluetoothService = new ClassicBluetoothService();
-
-async function listSystemPrinters(): Promise<{
-  defaultPrinter: string | null;
-  printers: Array<{
-    name: string;
-    status: string;
-    isDefault: boolean;
-  }>;
-}> {
-  if (process.platform !== 'darwin') {
-    throw new CommandError(
-      'UNSUPPORTED_ACTION',
-      'System printer listing is currently implemented for macOS only.'
-    );
-  }
-
-  const output = await execFileText('/usr/bin/lpstat', ['-p', '-d']);
-  const lines = output.split(/\r?\n/);
-
-  let defaultPrinter: string | null = null;
-  const printerStatuses = new Map<string, string>();
-
-  for (const line of lines) {
-    const defaultMatch = line.match(/^system default destination:\s+(.+)$/i);
-    if (defaultMatch) {
-      defaultPrinter = defaultMatch[1].trim();
-      continue;
-    }
-
-    const printerMatch = line.match(/^printer\s+(\S+)\s*(.*)$/i);
-    if (printerMatch) {
-      const name = printerMatch[1].trim();
-      const status = printerMatch[2]?.trim() || 'unknown';
-      printerStatuses.set(name, status);
-    }
-  }
-
-  const printers = [...printerStatuses.entries()].map(([name, status]) => ({
-    name,
-    status,
-    isDefault: defaultPrinter === name,
-  }));
-
-  return {
-    defaultPrinter,
-    printers,
-  };
-}
-
-async function printWithSystemPrinter(options: {
-  content: string;
-  printer?: string;
-  title: string;
-}): Promise<{
-  queued: boolean;
-  requestId: string | null;
-  printer: string | null;
-}> {
-  if (process.platform !== 'darwin') {
-    throw new CommandError(
-      'UNSUPPORTED_ACTION',
-      'System printer printing is currently implemented for macOS only.'
-    );
-  }
-
-  const tempFile = join(
-    tmpdir(),
-    `bluetooth-print-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`
-  );
-  await writeFile(tempFile, options.content, 'utf8');
-
-  try {
-    const args = ['-t', options.title];
-    if (options.printer) {
-      args.push('-d', options.printer);
-    }
-    args.push(tempFile);
-
-    const output = await execFileText('/usr/bin/lp', args);
-    const requestIdMatch = output.match(/request id is\s+(\S+)/i);
-    const printerMatch = output.match(/^\s*request id is\s+([^\-\s]+)-/i);
-
-    return {
-      queued: true,
-      requestId: requestIdMatch?.[1] ?? null,
-      printer: options.printer ?? printerMatch?.[1] ?? null,
-    };
-  } catch (error) {
-    throw new CommandError(
-      'PRINT_FAILED',
-      error instanceof Error ? error.message : 'Failed to send print job.'
-    );
-  } finally {
-    await unlink(tempFile).catch(() => {
-      // Ignore cleanup failures.
-    });
-  }
-}
 
 async function readMacClassicSnapshot(): Promise<BluetoothDeviceInfo[]> {
   const now = new Date().toISOString();
@@ -934,20 +904,70 @@ function parseScanOptions(payload: unknown): ScanOptions {
   };
 }
 
+function parseClassicDataSendRequest(payload: unknown): ClassicDataSendRequest {
+  if (!isDict(payload)) {
+    throw new CommandError('INVALID_PAYLOAD', 'Classic data.send payload must be an object.');
+  }
+
+  const deviceId = requirePayloadString(payload, 'id');
+  const encoding = parseEncoding(payload.encoding);
+  const data = parseDataBuffer(payload, encoding);
+  if (data.length === 0) {
+    throw new CommandError('INVALID_PAYLOAD', 'Classic data.send payload cannot be empty.');
+  }
+
+  return {
+    deviceId,
+    data,
+  };
+}
+
+function parseDataBuffer(payload: Dict, encoding: DataEncoding): Buffer {
+  if (Array.isArray(payload.bytes)) {
+    const bytes = payload.bytes;
+    const validBytes = bytes.every(
+      (entry) =>
+        typeof entry === 'number' &&
+        Number.isInteger(entry) &&
+        entry >= 0 &&
+        entry <= 255
+    );
+    if (!validBytes) {
+      throw new CommandError(
+        'INVALID_PAYLOAD',
+        'payload.bytes must be an array of integers between 0 and 255.'
+      );
+    }
+    return Buffer.from(bytes);
+  }
+
+  const content = requirePayloadString(payload, 'content');
+  try {
+    return Buffer.from(content, encoding);
+  } catch {
+    throw new CommandError(
+      'INVALID_PAYLOAD',
+      `Unable to decode classic data payload using encoding "${encoding}".`
+    );
+  }
+}
+
+function parseEncoding(value: unknown): DataEncoding {
+  if (value === undefined) {
+    return 'utf8';
+  }
+  if (value === 'utf8' || value === 'base64' || value === 'hex') {
+    return value;
+  }
+  throw new CommandError('INVALID_PAYLOAD', 'encoding must be one of: utf8, base64, hex.');
+}
+
 function requirePayloadString(payload: unknown, key: string): string {
   if (!isDict(payload) || typeof payload[key] !== 'string') {
     throw new CommandError('INVALID_PAYLOAD', `Payload must include a string "${key}".`);
   }
 
   return payload[key] as string;
-}
-
-function readPayloadOptionalString(payload: unknown, key: string): string | undefined {
-  if (!isDict(payload)) {
-    return undefined;
-  }
-
-  return typeof payload[key] === 'string' ? (payload[key] as string) : undefined;
 }
 
 function firstString(value: Dict, keys: string[]): string | null {

@@ -28,6 +28,26 @@ interface ScanOptions {
   serviceUuids: string[];
 }
 
+type DataEncoding = 'utf8' | 'base64' | 'hex';
+
+interface BleDataSendRequest {
+  deviceId: string;
+  serviceUuid: string;
+  characteristicUuid: string;
+  data: Buffer;
+  withResponse: boolean;
+  chunkSize: number;
+}
+
+interface BleDataSendResult {
+  id: string;
+  serviceUuid: string;
+  characteristicUuid: string;
+  bytes: number;
+  chunks: number;
+  withResponse: boolean;
+}
+
 interface AdapterStatus {
   adapter: 'noble' | 'unavailable';
   available: boolean;
@@ -48,6 +68,7 @@ interface BluetoothAdapter {
   stopScan(): Promise<void>;
   connect(deviceId: string): Promise<BluetoothDeviceInfo>;
   disconnect(deviceId: string): Promise<void>;
+  sendData(request: BleDataSendRequest): Promise<BleDataSendResult>;
   destroy(): Promise<void>;
 }
 
@@ -97,6 +118,10 @@ class UnsupportedBluetoothAdapter implements BluetoothAdapter {
     throw new CommandError('ADAPTER_UNAVAILABLE', this.unavailableMessage);
   }
 
+  async sendData(): Promise<BleDataSendResult> {
+    throw new CommandError('ADAPTER_UNAVAILABLE', this.unavailableMessage);
+  }
+
   async destroy(): Promise<void> {
     return Promise.resolve();
   }
@@ -133,6 +158,29 @@ interface NoblePeripheral {
   removeListener?(event: 'disconnect', listener: () => void): void;
   connect(callback: (error?: unknown) => void): void;
   disconnect(callback: (error?: unknown) => void): void;
+  discoverSomeServicesAndCharacteristics?(
+    serviceUuids: string[],
+    characteristicUuids: string[],
+    callback: (
+      error?: unknown,
+      services?: unknown[],
+      characteristics?: NobleCharacteristic[]
+    ) => void
+  ): void;
+  discoverAllServicesAndCharacteristics?(
+    callback: (
+      error?: unknown,
+      services?: unknown[],
+      characteristics?: NobleCharacteristic[]
+    ) => void
+  ): void;
+}
+
+interface NobleCharacteristic {
+  uuid: string;
+  serviceUuid?: string;
+  _serviceUuid?: string;
+  write(data: Buffer, withoutResponse: boolean, callback: (error?: unknown) => void): void;
 }
 
 class NobleBluetoothAdapter implements BluetoothAdapter {
@@ -244,6 +292,42 @@ class NobleBluetoothAdapter implements BluetoothAdapter {
 
     await this.disconnectPeripheral(peripheral);
     this.updateDeviceConnection(peripheral.id, false);
+  }
+
+  async sendData(request: BleDataSendRequest): Promise<BleDataSendResult> {
+    const peripheral = this.peripherals.get(request.deviceId);
+    if (!peripheral) {
+      throw new CommandError('DEVICE_NOT_FOUND', `Unknown device id "${request.deviceId}".`);
+    }
+
+    await this.ensurePeripheralConnected(peripheral);
+
+    const characteristic = await this.findCharacteristic(
+      peripheral,
+      request.serviceUuid,
+      request.characteristicUuid
+    );
+
+    const chunks = splitBuffer(request.data, request.chunkSize);
+    for (const chunk of chunks) {
+      await this.writeCharacteristic(characteristic, chunk, request.withResponse);
+    }
+
+    const result: BleDataSendResult = {
+      id: request.deviceId,
+      serviceUuid: request.serviceUuid,
+      characteristicUuid: request.characteristicUuid,
+      bytes: request.data.length,
+      chunks: chunks.length,
+      withResponse: request.withResponse,
+    };
+
+    this.emitEvent({
+      type: 'data.sent',
+      payload: result,
+    });
+
+    return result;
   }
 
   async destroy(): Promise<void> {
@@ -358,6 +442,99 @@ class NobleBluetoothAdapter implements BluetoothAdapter {
     });
   }
 
+  private async ensurePeripheralConnected(peripheral: NoblePeripheral): Promise<void> {
+    if (peripheral.state === 'connected') {
+      return;
+    }
+
+    await this.connectPeripheral(peripheral);
+    this.attachDisconnectListener(peripheral);
+
+    const mapped = this.mapPeripheral(peripheral, true);
+    this.devices.set(mapped.id, mapped);
+    this.emitEvent({
+      type: 'device.updated',
+      payload: mapped,
+    });
+  }
+
+  private async findCharacteristic(
+    peripheral: NoblePeripheral,
+    serviceUuid: string,
+    characteristicUuid: string
+  ): Promise<NobleCharacteristic> {
+    if (typeof peripheral.discoverSomeServicesAndCharacteristics === 'function') {
+      const characteristics = await new Promise<NobleCharacteristic[]>((resolve, reject) => {
+        peripheral.discoverSomeServicesAndCharacteristics?.(
+          [serviceUuid],
+          [characteristicUuid],
+          (error?: unknown, _services?: unknown[], discovered?: NobleCharacteristic[]) => {
+            if (error) {
+              reject(toError(error));
+              return;
+            }
+            resolve(Array.isArray(discovered) ? discovered.filter(isNobleCharacteristic) : []);
+          }
+        );
+      });
+
+      const byUuid = characteristics.find(
+        (candidate) => normalizeUuid(candidate.uuid) === characteristicUuid
+      );
+      if (byUuid) {
+        return byUuid;
+      }
+    }
+
+    if (typeof peripheral.discoverAllServicesAndCharacteristics === 'function') {
+      const characteristics = await new Promise<NobleCharacteristic[]>((resolve, reject) => {
+        peripheral.discoverAllServicesAndCharacteristics?.(
+          (error?: unknown, _services?: unknown[], discovered?: NobleCharacteristic[]) => {
+            if (error) {
+              reject(toError(error));
+              return;
+            }
+            resolve(Array.isArray(discovered) ? discovered.filter(isNobleCharacteristic) : []);
+          }
+        );
+      });
+
+      const byServiceAndUuid = characteristics.find((candidate) => {
+        const candidateService =
+          candidate.serviceUuid ??
+          (typeof candidate._serviceUuid === 'string' ? candidate._serviceUuid : '');
+        return (
+          normalizeUuid(candidate.uuid) === characteristicUuid &&
+          normalizeUuid(candidateService) === serviceUuid
+        );
+      });
+      if (byServiceAndUuid) {
+        return byServiceAndUuid;
+      }
+    }
+
+    throw new CommandError(
+      'CHARACTERISTIC_NOT_FOUND',
+      `Cannot find BLE characteristic "${characteristicUuid}" on service "${serviceUuid}".`
+    );
+  }
+
+  private async writeCharacteristic(
+    characteristic: NobleCharacteristic,
+    data: Buffer,
+    withResponse: boolean
+  ): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      characteristic.write(data, !withResponse, (error?: unknown) => {
+        if (error) {
+          reject(toError(error));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
   private async disconnectPeripheral(peripheral: NoblePeripheral): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       peripheral.disconnect((error?: unknown) => {
@@ -453,6 +630,10 @@ export class BleBluetoothService {
         await this.adapter.disconnect(deviceId);
         return { id: deviceId, disconnected: true };
       }
+      case 'data.send': {
+        const sendRequest = parseDataSendRequest(request.payload);
+        return this.adapter.sendData(sendRequest);
+      }
       default: {
         throw new CommandError('UNKNOWN_ACTION', `Unsupported BLE action "${request.action}".`);
       }
@@ -523,6 +704,113 @@ function normalizeAddress(address: string | undefined, fallback: string): string
   return fallback;
 }
 
+function normalizeUuid(value: string): string {
+  return value.toLowerCase().replace(/[^0-9a-f]/g, '');
+}
+
+function splitBuffer(value: Buffer, chunkSize: number): Buffer[] {
+  if (value.length === 0) {
+    return [];
+  }
+
+  const chunks: Buffer[] = [];
+  for (let offset = 0; offset < value.length; offset += chunkSize) {
+    chunks.push(value.subarray(offset, Math.min(value.length, offset + chunkSize)));
+  }
+  return chunks;
+}
+
+function parseDataSendRequest(payload: unknown): BleDataSendRequest {
+  if (!isDict(payload)) {
+    throw new CommandError('INVALID_PAYLOAD', 'BLE data.send payload must be an object.');
+  }
+
+  const deviceId = requirePayloadString(payload, 'id');
+  const rawServiceUuid = requirePayloadString(payload, 'serviceUuid');
+  const rawCharacteristicUuid = requirePayloadString(payload, 'characteristicUuid');
+  const serviceUuid = normalizeUuid(rawServiceUuid);
+  const characteristicUuid = normalizeUuid(rawCharacteristicUuid);
+  if (!serviceUuid || !characteristicUuid) {
+    throw new CommandError(
+      'INVALID_PAYLOAD',
+      'BLE data.send requires valid serviceUuid and characteristicUuid.'
+    );
+  }
+
+  const encoding = parseEncoding(payload.encoding);
+  let data = parseDataBuffer(payload, encoding);
+  const appendNewline =
+    typeof payload.appendNewline === 'boolean' ? payload.appendNewline : false;
+  if (appendNewline) {
+    data = Buffer.concat([data, Buffer.from('\n', 'utf8')]);
+  }
+  if (data.length === 0) {
+    throw new CommandError('INVALID_PAYLOAD', 'BLE data.send payload cannot be empty.');
+  }
+
+  const withResponse =
+    typeof payload.withResponse === 'boolean' ? payload.withResponse : true;
+  const chunkSizeRaw = readOptionalPayloadNumber(payload, 'chunkSize');
+  const chunkSize = Number.isInteger(chunkSizeRaw)
+    ? Math.min(Math.max(chunkSizeRaw as number, 20), 512)
+    : 180;
+
+  return {
+    deviceId,
+    serviceUuid,
+    characteristicUuid,
+    data,
+    withResponse,
+    chunkSize,
+  };
+}
+
+function parseDataBuffer(payload: Dict, encoding: DataEncoding): Buffer {
+  if (Array.isArray(payload.bytes)) {
+    const bytes = payload.bytes;
+    const validBytes = bytes.every(
+      (entry) =>
+        typeof entry === 'number' &&
+        Number.isInteger(entry) &&
+        entry >= 0 &&
+        entry <= 255
+    );
+    if (!validBytes) {
+      throw new CommandError(
+        'INVALID_PAYLOAD',
+        'payload.bytes must be an array of integers between 0 and 255.'
+      );
+    }
+
+    return Buffer.from(bytes);
+  }
+
+  const content = requirePayloadString(payload, 'content');
+  try {
+    return Buffer.from(content, encoding);
+  } catch {
+    throw new CommandError(
+      'INVALID_PAYLOAD',
+      `Unable to decode BLE print content using encoding "${encoding}".`
+    );
+  }
+}
+
+function parseEncoding(value: unknown): DataEncoding {
+  if (value === undefined) {
+    return 'utf8';
+  }
+  if (value === 'utf8' || value === 'base64' || value === 'hex') {
+    return value;
+  }
+  throw new CommandError('INVALID_PAYLOAD', 'encoding must be one of: utf8, base64, hex.');
+}
+
+function readOptionalPayloadNumber(payload: Dict, key: string): number | undefined {
+  const value = payload[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
 function isDict(value: unknown): value is Dict {
   return typeof value === 'object' && value !== null;
 }
@@ -537,6 +825,14 @@ function isNoblePeripheral(value: unknown): value is NoblePeripheral {
     typeof value.connect === 'function' &&
     typeof value.disconnect === 'function'
   );
+}
+
+function isNobleCharacteristic(value: unknown): value is NobleCharacteristic {
+  if (!isDict(value)) {
+    return false;
+  }
+
+  return typeof value.uuid === 'string' && typeof value.write === 'function';
 }
 
 function toError(error: unknown): Error {
