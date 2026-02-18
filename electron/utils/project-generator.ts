@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
 import { app } from 'electron';
-import { updateAppStatus } from './db';
+import { updateAppStatus } from '../database/index';
 
 export async function generateProject(appId: number, appDetails: any, apiKey: string) {
   const openai = new OpenAI({
