@@ -1,14 +1,15 @@
-
 import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
 import { app } from 'electron';
 import { updateAppStatus } from '../database/index';
+import { API_KEY } from '../services/ai-service';
+import { CreateAppPayload } from '../../shared/types';
 
-export async function generateProject(appId: number, appDetails: any, apiKey: string) {
+export async function generateProject(appId: number, appDetails: CreateAppPayload, apiKey?: string) {
   const openai = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
-    apiKey: apiKey,
+    apiKey: apiKey || API_KEY,
   });
 
   const appPath = path.join(app.getPath('userData'), 'apps', appId.toString());
@@ -23,7 +24,7 @@ export async function generateProject(appId: number, appDetails: any, apiKey: st
     Generate a simple, functional Electron application based on this description:
     "${appDetails.description}"
     Goal: "${appDetails.goal}"
-    Target Audience: "${appDetails.targetAudience}"
+    Target Audience: "${appDetails.target_audience}"
     
     You need to generate the following files:
     1. package.json (name should be the sanitized app name, main: "main.js")

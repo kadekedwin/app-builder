@@ -1,58 +1,18 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CreateAppPayload } from '../types';
-import { generateAppIdea, API_KEY } from '../services/ai-service';
+import { useCreateAppViewModel } from '../viewmodels/useCreateAppViewModel';
 
 export default function CreateAppOnboarding() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(1);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    targetAudience: '',
-    goal: '',
-  });
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleNext = () => {
-    setStep(step + 1);
-  };
-
-  const handleGenerate = async () => {
-    setIsGenerating(true);
-    try {
-      const idea = await generateAppIdea();
-      setFormData({
-        name: idea.name,
-        description: idea.description,
-        targetAudience: idea.targetAudience,
-        goal: idea.goal,
-      });
-    } catch (error) {
-      console.error('Failed to generate app idea:', error);
-      alert('Failed to generate app idea. Please try again.');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const payload: CreateAppPayload = {
-      name: formData.name,
-      description: formData.description,
-      target_audience: formData.targetAudience,
-      goal: formData.goal,
-    };
-
-    // @ts-ignore
-    await window.ipcRenderer.invoke('create-app', payload, API_KEY);
-    navigate('/');
-  };
+  const {
+    step,
+    isGenerating,
+    formData,
+    handleChange,
+    handleNext,
+    handleBack,
+    handleGenerate,
+    handleSubmit
+  } = useCreateAppViewModel();
 
   return (
     <div className="onboarding-container">
@@ -114,7 +74,7 @@ export default function CreateAppOnboarding() {
               />
             </div>
              <div className="actions">
-              <button onClick={() => setStep(1)} className="btn-secondary">Back</button>
+              <button onClick={handleBack} className="btn-secondary">Back</button>
               <button onClick={handleNext} className="btn-primary">
                 Next
               </button>
@@ -136,7 +96,7 @@ export default function CreateAppOnboarding() {
               />
             </div>
              <div className="actions">
-              <button onClick={() => setStep(2)} className="btn-secondary">Back</button>
+              <button onClick={handleBack} className="btn-secondary">Back</button>
               <button onClick={handleSubmit} className="btn-primary">
                 Create App
               </button>

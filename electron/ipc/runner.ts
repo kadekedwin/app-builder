@@ -2,9 +2,9 @@ import { ipcMain, app, BrowserWindow } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { updateAppStatus } from '../database/index';
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+
 
 // Track running app windows: appId -> BrowserWindow
 const runningApps = new Map<number, BrowserWindow>();

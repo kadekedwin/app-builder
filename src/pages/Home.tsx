@@ -1,44 +1,26 @@
-import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { App } from '../types';
 import { Search, Plus, Rocket, ChefHat, CheckCircle2, Play } from 'lucide-react';
+import { useAppsViewModel } from '../viewmodels/useAppsViewModel';
 
 export default function Home() {
-  const [apps, setApps] = useState<App[]>([]);
   const navigate = useNavigate();
-  const [searchTerm, setSearchTerm] = useState('');
+  const { 
+    apps, 
+    filteredApps, 
+    searchTerm, 
+    setSearchTerm, 
+    cookingCount, 
+    activeCount, 
+    handleRunApp 
+  } = useAppsViewModel();
 
-  useEffect(() => {
-    const fetchApps = () => {
-      // @ts-ignore
-      window.ipcRenderer.invoke('get-apps').then((result) => {
-        setApps(result);
-      });
-    };
-
-    fetchApps();
-
-    // Poll every 3 seconds to check for status updates
-    const interval = setInterval(fetchApps, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleRunApp = async (e: React.MouseEvent, appId: number) => {
-    e.stopPropagation(); // Prevent card click
-    // @ts-ignore
-    const success = await window.ipcRenderer.invoke('run-app', appId);
+  const onRunApp = async (e: React.MouseEvent, appId: number) => {
+    e.stopPropagation();
+    const success = await handleRunApp(appId);
     if (!success) {
       alert('Failed to run app. The app files might be missing or corrupted. Please try regenerating the app.');
     }
   };
-
-  const filteredApps = apps.filter(app => 
-    app.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    app.description.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const cookingCount = apps.filter(a => a.status === 'generating').length;
-  const activeCount = apps.filter(a => a.status === 'ready').length;
 
   return (
     <div className="container">
@@ -134,7 +116,7 @@ export default function Home() {
                     <button 
                       className="btn-primary" 
                       style={{ width: '100%', padding: '0.5rem' }}
-                      onClick={(e) => handleRunApp(e, app.id)}
+                      onClick={(e) => onRunApp(e, app.id)}
                     >
                       <Play size={16} /> Run App
                     </button>

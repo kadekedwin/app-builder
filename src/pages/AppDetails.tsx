@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { App } from '../types';
+import { App } from '../../shared/types';
 import { 
   ArrowLeft, 
   RotateCcw, 
@@ -14,7 +14,7 @@ import {
   Activity,
   Copy
 } from 'lucide-react';
-import { API_KEY } from '../services/ai-service';
+import { electronApi } from '../api/electron-api';
 
 export default function AppDetails() {
   const { id } = useParams();
@@ -24,8 +24,7 @@ export default function AppDetails() {
 
   useEffect(() => {
     const fetchApp = () => {
-      // @ts-ignore
-      window.ipcRenderer.invoke('get-app', Number(id)).then((result) => {
+      electronApi.getApp(Number(id)).then((result) => {
         setApp(result);
         setLoading(false);
       });
@@ -38,8 +37,7 @@ export default function AppDetails() {
 
   const handleRunApp = async () => {
     if (!app) return;
-    // @ts-ignore
-    const success = await window.ipcRenderer.invoke('run-app', app.id);
+    const success = await electronApi.runApp(app.id);
     if (!success) {
       alert('Failed to run app. The app files might be missing or corrupted. Please try regenerating the app.');
     }
@@ -50,8 +48,7 @@ export default function AppDetails() {
     const confirm = window.confirm('Are you sure you want to regenerate this app? This will overwrite existing files.');
     if (!confirm) return;
 
-    // @ts-ignore
-    await window.ipcRenderer.invoke('regenerate-app', app, API_KEY);
+    await electronApi.regenerateApp(app);
   };
 
   if (loading) return <div className="container">Loading...</div>;

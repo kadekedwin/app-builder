@@ -1,4 +1,3 @@
-
 import OpenAI from 'openai';
 
 // Hardcoded for now as per instructions
@@ -7,7 +6,6 @@ export const API_KEY = 'sk-or-v1-13a80a5f6838aabf86f8470f83fd47714c581d4f3801721
 const openai = new OpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
   apiKey: API_KEY,
-  dangerouslyAllowBrowser: true // Required for frontend usage
 });
 
 export interface GeneratedAppIdea {

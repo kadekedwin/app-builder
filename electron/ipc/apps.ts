@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { getApps, createApp, getAppById, updateAppStatus } from '../database/index';
 import { generateProject } from '../utils/project-generator';
+import { CreateAppPayload } from '../../shared/types';
 
 export function setupAppHandlers() {
   ipcMain.handle('get-apps', () => {
@@ -11,20 +12,20 @@ export function setupAppHandlers() {
     return getAppById(id);
   });
 
-  ipcMain.handle('create-app', async (_event, app, apiKey) => {
+  ipcMain.handle('create-app', async (_event, app: CreateAppPayload) => {
     const result = createApp(app);
     // @ts-ignore
     const appId = result.lastInsertRowid;
-    generateProject(appId, app, apiKey).catch(err => console.error('Background generation failed:', err));
+    generateProject(appId, app).catch(err => console.error('Background generation failed:', err));
     return result;
   });
 
-  ipcMain.handle('regenerate-app', async (_event, app, apiKey) => {
+  ipcMain.handle('regenerate-app', async (_event, app) => {
       // Reset status to generating
       updateAppStatus(app.id, 'generating');
       
       // Trigger generation
-      generateProject(app.id, app, apiKey).catch(err => {
+      generateProject(app.id, app).catch(err => {
         console.error('Background regeneration failed:', err);
         updateAppStatus(app.id, 'error');
       });

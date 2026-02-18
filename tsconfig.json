@@ -21,6 +21,6 @@
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true
   },
-  "include": ["src", "electron"],
+  "include": ["src", "electron", "shared"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
