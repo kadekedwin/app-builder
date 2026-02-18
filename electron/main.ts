@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import fs from "fs";
-import { initDB, getApps, createApp, updateAppStatus } from "./db";
+import { initDB, getApps, createApp, updateAppStatus, getAppById } from "./db";
 import { generateProject } from "./project-generator";
 
 import { fileURLToPath } from "node:url";
@@ -74,6 +74,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-apps', () => {
     return getApps();
+  });
+
+  ipcMain.handle('get-app', (_event, id) => {
+    return getAppById(id);
   });
 
   ipcMain.handle('create-app', async (_event, app, apiKey) => {

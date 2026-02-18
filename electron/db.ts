@@ -60,4 +60,8 @@ export function updateAppStatus(id: number, status: 'generating' | 'ready' | 'er
   return stmt.run({ id, status });
 }
 
+export function getAppById(id: number) {
+  return db.prepare('SELECT * FROM app WHERE id = @id').get({ id });
+}
+
 export default db;
