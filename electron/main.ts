@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import { initDB } from "./database/index";
 import { setupIPC } from "./ipc/index";
+import { bluetoothRepository } from "./repositories/BluetoothRepository";
 
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -43,6 +44,10 @@ app.on("window-all-closed", () => {
     app.quit();
     win = null;
   }
+});
+
+app.on("before-quit", () => {
+  void bluetoothRepository.destroy();
 });
 
 app.on("activate", () => {
