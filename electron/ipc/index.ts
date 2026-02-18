@@ -1,7 +1,9 @@
 import { setupAppHandlers } from './apps';
-import { setupBluetoothHandlers } from './bluetooth';
+import { setupBleBluetoothHandlers } from './bluetooth-ble';
+import { setupClassicBluetoothHandlers } from './bluetooth-classic';
 
 export function setupIPC() {
   setupAppHandlers();
-  setupBluetoothHandlers();
+  setupBleBluetoothHandlers();
+  setupClassicBluetoothHandlers();
 }

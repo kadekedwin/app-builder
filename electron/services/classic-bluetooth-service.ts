@@ -4,18 +4,12 @@ import { unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export type BluetoothEndpoint = 'ble' | 'classic';
-
-type Dict = Record<string, unknown>;
-
-export interface BluetoothActionRequest {
-  endpoint: BluetoothEndpoint;
+export interface ClassicActionRequest {
   action: string;
   payload?: unknown;
 }
 
-export interface BluetoothServiceEvent {
-  endpoint: BluetoothEndpoint;
+export interface ClassicEvent {
   type: string;
   payload: unknown;
 }
@@ -31,13 +25,15 @@ export interface BluetoothDeviceInfo {
   manufacturerDataHex: string | null;
 }
 
+type Dict = Record<string, unknown>;
+
 interface ScanOptions {
   allowDuplicates: boolean;
   serviceUuids: string[];
 }
 
 interface AdapterStatus {
-  adapter: 'noble' | 'classic' | 'unavailable';
+  adapter: 'classic' | 'unavailable';
   available: boolean;
   state: string;
   scanning: boolean;
@@ -49,7 +45,7 @@ interface AdapterEvent {
   payload: unknown;
 }
 
-interface BluetoothAdapter {
+interface ClassicAdapter {
   getStatus(): AdapterStatus;
   listDevices(): BluetoothDeviceInfo[];
   startScan(options: ScanOptions): Promise<void>;
@@ -68,22 +64,20 @@ class CommandError extends Error {
   }
 }
 
-class UnsupportedBluetoothAdapter implements BluetoothAdapter {
-  private readonly adapterName: AdapterStatus['adapter'];
-  private readonly unavailableMessage: string;
+class UnsupportedClassicAdapter implements ClassicAdapter {
+  private readonly message: string;
 
-  constructor(adapterName: AdapterStatus['adapter'], message: string) {
-    this.adapterName = adapterName;
-    this.unavailableMessage = message;
+  constructor(message: string) {
+    this.message = message;
   }
 
   getStatus(): AdapterStatus {
     return {
-      adapter: this.adapterName,
+      adapter: 'unavailable',
       available: false,
       state: 'unavailable',
       scanning: false,
-      message: this.unavailableMessage,
+      message: this.message,
     };
   }
 
@@ -92,57 +86,24 @@ class UnsupportedBluetoothAdapter implements BluetoothAdapter {
   }
 
   async startScan(): Promise<void> {
-    throw new CommandError('ADAPTER_UNAVAILABLE', this.unavailableMessage);
+    throw new CommandError('ADAPTER_UNAVAILABLE', this.message);
   }
 
   async stopScan(): Promise<void> {
-    throw new CommandError('ADAPTER_UNAVAILABLE', this.unavailableMessage);
+    throw new CommandError('ADAPTER_UNAVAILABLE', this.message);
   }
 
   async connect(): Promise<BluetoothDeviceInfo> {
-    throw new CommandError('ADAPTER_UNAVAILABLE', this.unavailableMessage);
+    throw new CommandError('ADAPTER_UNAVAILABLE', this.message);
   }
 
   async disconnect(): Promise<void> {
-    throw new CommandError('ADAPTER_UNAVAILABLE', this.unavailableMessage);
+    throw new CommandError('ADAPTER_UNAVAILABLE', this.message);
   }
 
   async destroy(): Promise<void> {
     return Promise.resolve();
   }
-}
-
-interface NobleLike {
-  state?: string;
-  on(event: string, listener: (...args: unknown[]) => void): void;
-  off?(event: string, listener: (...args: unknown[]) => void): void;
-  removeListener?(event: string, listener: (...args: unknown[]) => void): void;
-  startScanningAsync?(serviceUuids?: string[], allowDuplicates?: boolean): Promise<void>;
-  stopScanningAsync?(): Promise<void>;
-  startScanning?(
-    serviceUuids?: string[],
-    allowDuplicates?: boolean,
-    callback?: (error?: unknown) => void
-  ): void;
-  stopScanning?(callback?: (error?: unknown) => void): void;
-}
-
-interface NobleAdvertisement {
-  localName?: string;
-  serviceUuids?: string[];
-  manufacturerData?: Buffer;
-}
-
-interface NoblePeripheral {
-  id: string;
-  address?: string;
-  rssi?: number;
-  state?: string;
-  advertisement?: NobleAdvertisement;
-  on(event: 'disconnect', listener: () => void): void;
-  removeListener?(event: 'disconnect', listener: () => void): void;
-  connect(callback: (error?: unknown) => void): void;
-  disconnect(callback: (error?: unknown) => void): void;
 }
 
 interface ClassicBluetoothModuleLike {
@@ -167,277 +128,7 @@ interface ClassicSerialPortLike {
   close(): void;
 }
 
-class NobleBluetoothAdapter implements BluetoothAdapter {
-  private readonly noble: NobleLike;
-  private readonly emitEvent: (event: AdapterEvent) => void;
-  private readonly peripherals = new Map<string, NoblePeripheral>();
-  private readonly devices = new Map<string, BluetoothDeviceInfo>();
-  private readonly disconnectListeners = new Map<string, () => void>();
-  private scanning = false;
-  private state = 'unknown';
-  private readonly onStateChangeRef: (state: unknown) => void;
-  private readonly onDiscoverRef: (peripheral: unknown) => void;
-
-  constructor(noble: NobleLike, emitEvent: (event: AdapterEvent) => void) {
-    this.noble = noble;
-    this.emitEvent = emitEvent;
-    this.state = typeof noble.state === 'string' ? noble.state : 'unknown';
-
-    this.onStateChangeRef = (state: unknown) => {
-      this.state = typeof state === 'string' ? state : 'unknown';
-      this.emitEvent({
-        type: 'bluetooth.state',
-        payload: this.getStatus(),
-      });
-    };
-
-    this.onDiscoverRef = (peripheral: unknown) => {
-      if (!isNoblePeripheral(peripheral)) {
-        return;
-      }
-
-      const mapped = this.mapPeripheral(peripheral);
-      this.peripherals.set(mapped.id, peripheral);
-      this.devices.set(mapped.id, mapped);
-      this.emitEvent({
-        type: 'device.discovered',
-        payload: mapped,
-      });
-    };
-
-    this.noble.on('stateChange', this.onStateChangeRef);
-    this.noble.on('discover', this.onDiscoverRef);
-  }
-
-  getStatus(): AdapterStatus {
-    return {
-      adapter: 'noble',
-      available: true,
-      state: this.state,
-      scanning: this.scanning,
-    };
-  }
-
-  listDevices(): BluetoothDeviceInfo[] {
-    return [...this.devices.values()].sort((a, b) =>
-      b.lastSeenAt.localeCompare(a.lastSeenAt)
-    );
-  }
-
-  async startScan(options: ScanOptions): Promise<void> {
-    if (this.state !== 'poweredOn') {
-      throw new CommandError(
-        'ADAPTER_NOT_READY',
-        `Bluetooth adapter state is "${this.state}". It must be "poweredOn" to scan.`
-      );
-    }
-
-    await this.startScanningInternal(options);
-    this.scanning = true;
-    this.emitEvent({
-      type: 'scan.state',
-      payload: { active: true },
-    });
-  }
-
-  async stopScan(): Promise<void> {
-    await this.stopScanningInternal();
-    this.scanning = false;
-    this.emitEvent({
-      type: 'scan.state',
-      payload: { active: false },
-    });
-  }
-
-  async connect(deviceId: string): Promise<BluetoothDeviceInfo> {
-    const peripheral = this.peripherals.get(deviceId);
-    if (!peripheral) {
-      throw new CommandError('DEVICE_NOT_FOUND', `Unknown device id "${deviceId}".`);
-    }
-
-    await this.connectPeripheral(peripheral);
-    this.attachDisconnectListener(peripheral);
-
-    const mapped = this.mapPeripheral(peripheral, true);
-    this.devices.set(mapped.id, mapped);
-    this.emitEvent({
-      type: 'device.updated',
-      payload: mapped,
-    });
-
-    return mapped;
-  }
-
-  async disconnect(deviceId: string): Promise<void> {
-    const peripheral = this.peripherals.get(deviceId);
-    if (!peripheral) {
-      throw new CommandError('DEVICE_NOT_FOUND', `Unknown device id "${deviceId}".`);
-    }
-
-    await this.disconnectPeripheral(peripheral);
-    this.updateDeviceConnection(peripheral.id, false);
-  }
-
-  async destroy(): Promise<void> {
-    try {
-      await this.stopScan();
-    } catch {
-      // Ignore scan-stop failures during shutdown.
-    }
-
-    this.noble.off?.('stateChange', this.onStateChangeRef);
-    this.noble.off?.('discover', this.onDiscoverRef);
-    this.noble.removeListener?.('stateChange', this.onStateChangeRef);
-    this.noble.removeListener?.('discover', this.onDiscoverRef);
-
-    for (const [deviceId, peripheral] of this.peripherals.entries()) {
-      const listener = this.disconnectListeners.get(deviceId);
-      if (listener) {
-        peripheral.removeListener?.('disconnect', listener);
-      }
-    }
-  }
-
-  private mapPeripheral(
-    peripheral: NoblePeripheral,
-    connectedOverride?: boolean
-  ): BluetoothDeviceInfo {
-    const previous = this.devices.get(peripheral.id);
-    const advertisement = peripheral.advertisement ?? {};
-    const connected =
-      typeof connectedOverride === 'boolean'
-        ? connectedOverride
-        : peripheral.state === 'connected' || previous?.connected === true;
-
-    const serviceUuids = Array.isArray(advertisement.serviceUuids)
-      ? advertisement.serviceUuids
-      : previous?.serviceUuids ?? [];
-
-    return {
-      id: peripheral.id,
-      address: normalizeAddress(peripheral.address, peripheral.id),
-      name: advertisement.localName ?? previous?.name ?? null,
-      rssi: typeof peripheral.rssi === 'number' ? peripheral.rssi : previous?.rssi ?? null,
-      connected,
-      lastSeenAt: new Date().toISOString(),
-      serviceUuids,
-      manufacturerDataHex: advertisement.manufacturerData
-        ? advertisement.manufacturerData.toString('hex')
-        : previous?.manufacturerDataHex ?? null,
-    };
-  }
-
-  private async startScanningInternal(options: ScanOptions): Promise<void> {
-    if (typeof this.noble.startScanningAsync === 'function') {
-      await this.noble.startScanningAsync(options.serviceUuids, options.allowDuplicates);
-      return;
-    }
-
-    if (typeof this.noble.startScanning === 'function') {
-      await new Promise<void>((resolve, reject) => {
-        this.noble.startScanning?.(
-          options.serviceUuids,
-          options.allowDuplicates,
-          (error?: unknown) => {
-            if (error) {
-              reject(toError(error));
-              return;
-            }
-
-            resolve();
-          }
-        );
-      });
-      return;
-    }
-
-    throw new CommandError('ADAPTER_ERROR', 'Bluetooth adapter does not support scan start.');
-  }
-
-  private async stopScanningInternal(): Promise<void> {
-    if (typeof this.noble.stopScanningAsync === 'function') {
-      await this.noble.stopScanningAsync();
-      return;
-    }
-
-    if (typeof this.noble.stopScanning === 'function') {
-      await new Promise<void>((resolve, reject) => {
-        this.noble.stopScanning?.((error?: unknown) => {
-          if (error) {
-            reject(toError(error));
-            return;
-          }
-
-          resolve();
-        });
-      });
-      return;
-    }
-
-    throw new CommandError('ADAPTER_ERROR', 'Bluetooth adapter does not support scan stop.');
-  }
-
-  private async connectPeripheral(peripheral: NoblePeripheral): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      peripheral.connect((error?: unknown) => {
-        if (error) {
-          reject(toError(error));
-          return;
-        }
-
-        resolve();
-      });
-    });
-  }
-
-  private async disconnectPeripheral(peripheral: NoblePeripheral): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      peripheral.disconnect((error?: unknown) => {
-        if (error) {
-          reject(toError(error));
-          return;
-        }
-
-        resolve();
-      });
-    });
-  }
-
-  private attachDisconnectListener(peripheral: NoblePeripheral): void {
-    const existing = this.disconnectListeners.get(peripheral.id);
-    if (existing) {
-      peripheral.removeListener?.('disconnect', existing);
-    }
-
-    const listener = () => {
-      this.updateDeviceConnection(peripheral.id, false);
-    };
-
-    this.disconnectListeners.set(peripheral.id, listener);
-    peripheral.on('disconnect', listener);
-  }
-
-  private updateDeviceConnection(deviceId: string, connected: boolean): void {
-    const existing = this.devices.get(deviceId);
-    if (!existing) {
-      return;
-    }
-
-    const next: BluetoothDeviceInfo = {
-      ...existing,
-      connected,
-      lastSeenAt: new Date().toISOString(),
-    };
-
-    this.devices.set(deviceId, next);
-    this.emitEvent({
-      type: connected ? 'device.updated' : 'device.disconnected',
-      payload: connected ? next : { id: deviceId },
-    });
-  }
-}
-
-class NodeBluetoothClassicAdapter implements BluetoothAdapter {
+class NodeBluetoothClassicAdapter implements ClassicAdapter {
   private readonly ClassicSerialPort: new () => ClassicSerialPortLike;
   private readonly emitEvent: (event: AdapterEvent) => void;
   private readonly devices = new Map<string, BluetoothDeviceInfo>();
@@ -532,8 +223,7 @@ class NodeBluetoothClassicAdapter implements BluetoothAdapter {
       this.connections.delete(deviceId);
     });
 
-    const updated = this.updateDeviceConnection(deviceId, true);
-    return updated;
+    return this.updateDeviceConnection(deviceId, true);
   }
 
   async disconnect(deviceId: string): Promise<void> {
@@ -708,7 +398,7 @@ class NodeBluetoothClassicAdapter implements BluetoothAdapter {
   }
 }
 
-class MacOSClassicInfoAdapter implements BluetoothAdapter {
+class MacOSClassicInfoAdapter implements ClassicAdapter {
   private readonly emitEvent: (event: AdapterEvent) => void;
   private readonly devices = new Map<string, BluetoothDeviceInfo>();
   private scanning = false;
@@ -796,63 +486,58 @@ class MacOSClassicInfoAdapter implements BluetoothAdapter {
   }
 }
 
-export class BluetoothService {
-  private bleAdapter: BluetoothAdapter;
-  private classicAdapter: BluetoothAdapter;
-  private readonly listeners = new Set<(event: BluetoothServiceEvent) => void>();
+export class ClassicBluetoothService {
+  private readonly adapter: ClassicAdapter;
+  private readonly listeners = new Set<(event: ClassicEvent) => void>();
 
   constructor() {
-    this.bleAdapter = this.createBleAdapter();
-    this.classicAdapter = this.createClassicAdapter();
+    this.adapter = this.createAdapter();
   }
 
-  subscribe(listener: (event: BluetoothServiceEvent) => void): () => void {
+  subscribe(listener: (event: ClassicEvent) => void): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
   }
 
-  async execute(request: BluetoothActionRequest): Promise<unknown> {
-    const adapter = this.getAdapter(request.endpoint);
+  async execute(request: ClassicActionRequest): Promise<unknown> {
     switch (request.action) {
       case 'ping': {
         return {
           pong: true,
-          endpoint: request.endpoint,
+          endpoint: 'classic',
           at: new Date().toISOString(),
         };
       }
       case 'status.get': {
-        return adapter.getStatus();
+        return this.adapter.getStatus();
       }
       case 'devices.list': {
-        return adapter.listDevices();
+        return this.adapter.listDevices();
       }
       case 'scan.start': {
         const options = parseScanOptions(request.payload);
-        await adapter.startScan(options);
+        await this.adapter.startScan(options);
         return { active: true };
       }
       case 'scan.stop': {
-        await adapter.stopScan();
+        await this.adapter.stopScan();
         return { active: false };
       }
       case 'device.connect': {
         const deviceId = requirePayloadString(request.payload, 'id');
-        return adapter.connect(deviceId);
+        return this.adapter.connect(deviceId);
       }
       case 'device.disconnect': {
         const deviceId = requirePayloadString(request.payload, 'id');
-        await adapter.disconnect(deviceId);
+        await this.adapter.disconnect(deviceId);
         return { id: deviceId, disconnected: true };
       }
       case 'printers.list': {
-        assertClassicEndpoint(request.endpoint, request.action);
         return listSystemPrinters();
       }
       case 'printer.print': {
-        assertClassicEndpoint(request.endpoint, request.action);
         const content = requirePayloadString(request.payload, 'content');
         const printer = readPayloadOptionalString(request.payload, 'printer');
         const title = readPayloadOptionalString(request.payload, 'title') ?? 'Bluetooth Print Job';
@@ -863,48 +548,21 @@ export class BluetoothService {
         });
       }
       default: {
-        throw new CommandError('UNKNOWN_ACTION', `Unsupported action "${request.action}".`);
+        throw new CommandError(
+          'UNKNOWN_ACTION',
+          `Unsupported Classic action "${request.action}".`
+        );
       }
     }
   }
 
   async destroy(): Promise<void> {
-    await this.bleAdapter.destroy();
-    await this.classicAdapter.destroy();
+    await this.adapter.destroy();
   }
 
-  private getAdapter(endpoint: BluetoothEndpoint): BluetoothAdapter {
-    return endpoint === 'ble' ? this.bleAdapter : this.classicAdapter;
-  }
-
-  private emit(endpoint: BluetoothEndpoint, event: AdapterEvent): void {
-    const wrapped: BluetoothServiceEvent = {
-      endpoint,
-      type: event.type,
-      payload: event.payload,
-    };
-    for (const listener of this.listeners) {
-      listener(wrapped);
-    }
-  }
-
-  private createBleAdapter(): BluetoothAdapter {
-    const require = createRequire(import.meta.url);
-    try {
-      const nobleModule = require('@abandonware/noble');
-      const noble = (nobleModule?.default ?? nobleModule) as NobleLike;
-      return new NobleBluetoothAdapter(noble, (event) => this.emit('ble', event));
-    } catch {
-      return new UnsupportedBluetoothAdapter(
-        'unavailable',
-        'BLE adapter unavailable. Install "@abandonware/noble" and restart.'
-      );
-    }
-  }
-
-  private createClassicAdapter(): BluetoothAdapter {
+  private createAdapter(): ClassicAdapter {
     if (process.platform === 'darwin') {
-      return new MacOSClassicInfoAdapter((event) => this.emit('classic', event));
+      return new MacOSClassicInfoAdapter((event) => this.emit(event));
     }
 
     const require = createRequire(import.meta.url);
@@ -913,23 +571,22 @@ export class BluetoothService {
       if (typeof classicModule?.BluetoothSerialPort !== 'function') {
         throw new Error('Invalid classic module shape.');
       }
-      return new NodeBluetoothClassicAdapter(classicModule, (event) => this.emit('classic', event));
+      return new NodeBluetoothClassicAdapter(classicModule, (event) => this.emit(event));
     } catch {
-      return new UnsupportedBluetoothAdapter(
-        'classic',
+      return new UnsupportedClassicAdapter(
         'Bluetooth Classic adapter unavailable. Install "node-bluetooth-serial-port" (Linux/Windows) and restart.'
       );
     }
   }
-}
 
-export const bluetoothService = new BluetoothService();
-
-function assertClassicEndpoint(endpoint: BluetoothEndpoint, action: string): void {
-  if (endpoint !== 'classic') {
-    throw new CommandError('UNSUPPORTED_ACTION', `"${action}" is only available on /classic.`);
+  private emit(event: AdapterEvent): void {
+    for (const listener of this.listeners) {
+      listener(event);
+    }
   }
 }
+
+export const classicBluetoothService = new ClassicBluetoothService();
 
 async function listSystemPrinters(): Promise<{
   defaultPrinter: string | null;
@@ -1010,7 +667,7 @@ async function printWithSystemPrinter(options: {
 
     const output = await execFileText('/usr/bin/lp', args);
     const requestIdMatch = output.match(/request id is\s+(\S+)/i);
-    const printerMatch = output.match(/^\s*request id is\s+([^-\s]+)-/i);
+    const printerMatch = output.match(/^\s*request id is\s+([^\-\s]+)-/i);
 
     return {
       queued: true,
@@ -1279,10 +936,7 @@ function parseScanOptions(payload: unknown): ScanOptions {
 
 function requirePayloadString(payload: unknown, key: string): string {
   if (!isDict(payload) || typeof payload[key] !== 'string') {
-    throw new CommandError(
-      'INVALID_PAYLOAD',
-      `Payload must include a string "${key}".`
-    );
+    throw new CommandError('INVALID_PAYLOAD', `Payload must include a string "${key}".`);
   }
 
   return payload[key] as string;
@@ -1364,27 +1018,8 @@ function firstStringArray(value: Dict, keys: string[]): string[] {
   return [];
 }
 
-function normalizeAddress(address: string | undefined, fallback: string): string {
-  if (address && address.trim().length > 0 && address !== 'unknown') {
-    return address;
-  }
-  return fallback;
-}
-
 function isDict(value: unknown): value is Dict {
   return typeof value === 'object' && value !== null;
-}
-
-function isNoblePeripheral(value: unknown): value is NoblePeripheral {
-  if (!isDict(value)) {
-    return false;
-  }
-
-  return (
-    typeof value.id === 'string' &&
-    typeof value.connect === 'function' &&
-    typeof value.disconnect === 'function'
-  );
 }
 
 function toError(error: unknown): Error {

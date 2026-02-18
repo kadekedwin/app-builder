@@ -4,34 +4,46 @@
 
 Use Electron IPC (not websocket):
 
-- Request channel: `bluetooth:action`
-- Event channel: `bluetooth:event`
-- Endpoints: `ble`, `classic`
+- BLE request channel: `bluetooth:ble:action`
+- BLE event channel: `bluetooth:ble:event`
+- Classic request channel: `bluetooth:classic:action`
+- Classic event channel: `bluetooth:classic:event`
 
-Send an action:
+Send a BLE action:
 
 ```js
-const result = await window.ipcRenderer.invoke('bluetooth:action', {
-  endpoint: 'ble',
+const result = await window.ipcRenderer.invoke('bluetooth:ble:action', {
   action: 'status.get',
   payload: {},
 });
 ```
 
-Listen for Bluetooth events:
+Send a Classic action:
 
 ```js
-window.ipcRenderer.on('bluetooth:event', (_event, event) => {
-  console.log(event.endpoint, event.type, event.payload);
+const result = await window.ipcRenderer.invoke('bluetooth:classic:action', {
+  action: 'status.get',
+  payload: {},
 });
 ```
 
-Response shape:
+Listen for BLE and Classic events separately:
+
+```js
+window.ipcRenderer.on('bluetooth:ble:event', (_event, event) => {
+  console.log('ble', event.type, event.payload);
+});
+window.ipcRenderer.on('bluetooth:classic:event', (_event, event) => {
+  console.log('classic', event.type, event.payload);
+});
+```
+
+Response shape (both channels):
 
 ```json
 {
   "ok": true,
-  "endpoint": "ble",
+  "endpoint": "classic",
   "action": "status.get",
   "payload": {}
 }
@@ -68,12 +80,14 @@ export default {
 
 ## Bluetooth Repository (IPC)
 
-Bluetooth is handled by `BluetoothRepository` in Electron main process (no local websocket server).
-Implementation lives in `electron/services/bluetooth-service.ts`; repository is a thin IO wrapper in `electron/repositories/BluetoothRepository.ts`.
+Bluetooth is split by protocol end-to-end (service, repository, IPC, and UI):
 
-- IPC action channel: `bluetooth:action`
-- IPC event channel: `bluetooth:event`
-- Endpoints: `ble`, `classic`
+- BLE service: `electron/services/bluetooth/ble-service.ts`
+- Classic service: `electron/services/bluetooth/classic-service.ts`
+- BLE repository: `electron/repositories/BleBluetoothRepository.ts`
+- Classic repository: `electron/repositories/ClassicBluetoothRepository.ts`
+- BLE IPC: `electron/ipc/bluetooth-ble.ts`
+- Classic IPC: `electron/ipc/bluetooth-classic.ts`
 
 ### Adapter note
 
@@ -81,22 +95,40 @@ BLE scan/connect needs `@abandonware/noble`.
 Classic scan/connect needs `node-bluetooth-serial-port` on Linux/Windows.
 On macOS, Classic runs in info-only mode (list known/paired/connected devices) and cannot open RFCOMM socket connections.
 
-### Action format
+### Action format (BLE)
 
 ```json
 {
-  "endpoint": "ble",
   "action": "status.get",
   "payload": {}
 }
 ```
 
-### Supported actions
+### Action format (Classic)
+
+```json
+{
+  "action": "status.get",
+  "payload": {}
+}
+```
+
+### Supported BLE actions
 
 - `ping`
 - `status.get`
 - `devices.list`
 - `scan.start` payload: `{ "allowDuplicates": true, "serviceUuids": [] }`
+- `scan.stop`
+- `device.connect` payload: `{ "id": "device-id" }`
+- `device.disconnect` payload: `{ "id": "device-id" }`
+
+### Supported Classic actions
+
+- `ping`
+- `status.get`
+- `devices.list`
+- `scan.start`
 - `scan.stop`
 - `device.connect` payload: `{ "id": "device-id" }`
 - `device.disconnect` payload: `{ "id": "device-id" }`
@@ -106,12 +138,30 @@ On macOS, Classic runs in info-only mode (list known/paired/connected devices) a
 ### Minimal renderer example
 
 ```js
-window.ipcRenderer.invoke('bluetooth:action', {
-  endpoint: 'ble',
+window.ipcRenderer.invoke('bluetooth:ble:action', {
+  action: 'status.get',
+});
+window.ipcRenderer.invoke('bluetooth:classic:action', {
   action: 'status.get',
 });
 
-window.ipcRenderer.on('bluetooth:event', (_event, payload) => {
-  console.log(payload);
+window.ipcRenderer.on('bluetooth:ble:event', (_event, payload) => {
+  console.log('ble', payload);
+});
+window.ipcRenderer.on('bluetooth:classic:event', (_event, payload) => {
+  console.log('classic', payload);
 });
 ```
+
+### Example UI screen
+
+A ready-to-use frontend demo screen is available at route `/bluetooth`:
+
+- page: `src/pages/BluetoothConsole.tsx`
+- home navigation button: `src/pages/Home.tsx`
+
+It includes buttons for:
+
+- `scan.start`, `scan.stop`, `devices.list`, `device.connect`, `device.disconnect`
+- pair helper guidance
+- `printers.list`, `printer.print` (classic endpoint)

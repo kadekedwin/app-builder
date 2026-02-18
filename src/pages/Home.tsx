@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, Rocket, ChefHat, CheckCircle2, Play } from 'lucide-react';
+import { Search, Plus, Rocket, ChefHat, CheckCircle2, Play, Bluetooth } from 'lucide-react';
 import { useAppViewModel } from '../viewmodels/useAppViewModel';
 
 export default function Home() {
@@ -39,6 +39,9 @@ export default function Home() {
           </div>
           <button className="btn-primary" onClick={() => navigate('/create')}>
             <Plus size={18} /> Create New App
+          </button>
+          <button className="btn-secondary" onClick={() => navigate('/bluetooth')}>
+            <Bluetooth size={18} /> Bluetooth
           </button>
         </div>
       </header>
