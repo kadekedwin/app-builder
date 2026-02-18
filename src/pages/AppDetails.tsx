@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { App } from '../../shared/types';
+import { App } from '../../shared/types/app';
 import { 
   ArrowLeft, 
   RotateCcw, 
@@ -14,7 +14,7 @@ import {
   Activity,
   Copy
 } from 'lucide-react';
-import { electronApi } from '../api/electron-api';
+import { appApi } from '../api/app-api';
 
 export default function AppDetails() {
   const { id } = useParams();
@@ -24,7 +24,7 @@ export default function AppDetails() {
 
   useEffect(() => {
     const fetchApp = () => {
-      electronApi.getApp(Number(id)).then((result) => {
+      appApi.getApp(Number(id)).then((result) => {
         setApp(result);
         setLoading(false);
       });
@@ -37,7 +37,7 @@ export default function AppDetails() {
 
   const handleRunApp = async () => {
     if (!app) return;
-    const success = await electronApi.runApp(app.id);
+    const success = await appApi.runApp(app.id);
     if (!success) {
       alert('Failed to run app. The app files might be missing or corrupted. Please try regenerating the app.');
     }
@@ -48,7 +48,7 @@ export default function AppDetails() {
     const confirm = window.confirm('Are you sure you want to regenerate this app? This will overwrite existing files.');
     if (!confirm) return;
 
-    await electronApi.regenerateApp(app);
+    await appApi.regenerateApp(app);
   };
 
   if (loading) return <div className="container">Loading...</div>;

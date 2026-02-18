@@ -1,6 +1,6 @@
-import { App, CreateAppPayload } from '../../shared/types';
+import { App, CreateAppPayload } from '../../shared/types/app';
 
-export const electronApi = {
+export const appApi = {
   getApps: async (): Promise<App[]> => {
     // @ts-ignore
     return window.ipcRenderer.invoke('get-apps');

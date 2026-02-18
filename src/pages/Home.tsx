@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { Search, Plus, Rocket, ChefHat, CheckCircle2, Play } from 'lucide-react';
-import { useAppsViewModel } from '../viewmodels/useAppsViewModel';
+import { useAppViewModel } from '../viewmodels/useAppViewModel';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -12,7 +12,7 @@ export default function Home() {
     cookingCount, 
     activeCount, 
     handleRunApp 
-  } = useAppsViewModel();
+  } = useAppViewModel('list');
 
   const onRunApp = async (e: React.MouseEvent, appId: number) => {
     e.stopPropagation();

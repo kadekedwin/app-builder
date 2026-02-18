@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CreateAppPayload } from '../../shared/types';
-import { electronApi } from '../api/electron-api';
+import { App, CreateAppPayload } from '../../shared/types/app';
+import { appApi } from '../api/app-api';
+
+export type ViewModelMode = 'list' | 'create';
 
 interface FormData {
   name: string;
@@ -10,8 +12,14 @@ interface FormData {
   goal: string;
 }
 
-export function useCreateAppViewModel() {
+export function useAppViewModel(mode: ViewModelMode = 'list') {
   const navigate = useNavigate();
+
+  // List State
+  const [apps, setApps] = useState<App[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Create State
   const [step, setStep] = useState(1);
   const [isGenerating, setIsGenerating] = useState(false);
   const [formData, setFormData] = useState<FormData>({
@@ -21,6 +29,36 @@ export function useCreateAppViewModel() {
     goal: '',
   });
 
+  // --- List Logic ---
+  const fetchApps = useCallback(() => {
+    if (mode === 'list') {
+      appApi.getApps().then((result) => {
+        setApps(result);
+      });
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode === 'list') {
+      fetchApps();
+      const interval = setInterval(fetchApps, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [fetchApps, mode]);
+
+  const handleRunApp = async (appId: number): Promise<boolean> => {
+    return await appApi.runApp(appId);
+  };
+
+  const filteredApps = apps.filter(app => 
+    app.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    app.description.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const cookingCount = apps.filter(a => a.status === 'generating').length;
+  const activeCount = apps.filter(a => a.status === 'ready').length;
+
+  // --- Create Logic ---
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
@@ -31,12 +69,12 @@ export function useCreateAppViewModel() {
 
   const handleBack = () => {
     setStep(step - 1);
-  }
+  };
 
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
-      const idea = await electronApi.generateAppIdea();
+      const idea = await appApi.generateAppIdea();
       setFormData({
         name: idea.name,
         description: idea.description,
@@ -61,7 +99,7 @@ export function useCreateAppViewModel() {
     };
 
     try {
-        await electronApi.createApp(payload);
+        await appApi.createApp(payload);
         navigate('/');
     } catch (error) {
         console.error("Failed to create app:", error);
@@ -70,6 +108,17 @@ export function useCreateAppViewModel() {
   };
 
   return {
+    // List
+    apps,
+    filteredApps,
+    searchTerm,
+    setSearchTerm,
+    cookingCount,
+    activeCount,
+    fetchApps,
+    handleRunApp,
+
+    // Create
     step,
     isGenerating,
     formData,

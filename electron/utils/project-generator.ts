@@ -2,9 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
 import { app } from 'electron';
-import { updateAppStatus } from '../database/index';
+import { appRepository } from '../repositories/AppRepository';
 import { API_KEY } from '../services/ai-service';
-import { CreateAppPayload } from '../../shared/types';
+import { CreateAppPayload } from '../../shared/types/app';
 
 export async function generateProject(appId: number, appDetails: CreateAppPayload, apiKey?: string) {
   const openai = new OpenAI({
@@ -83,11 +83,11 @@ export async function generateProject(appId: number, appDetails: CreateAppPayloa
     }
 
     console.log(`Generated project for app ${appId} at ${appPath}`);
-    updateAppStatus(appId, 'ready');
+    appRepository.updateStatus(appId, 'ready');
 
   } catch (error) {
     console.error('Failed to generate project files:', error);
     // Don't fail the whole request, just log it. The DB record is already created.
-    updateAppStatus(appId, 'error');
+    appRepository.updateStatus(appId, 'error');
   }
 }

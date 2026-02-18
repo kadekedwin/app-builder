@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { useCreateAppViewModel } from '../viewmodels/useCreateAppViewModel';
+import { useAppViewModel } from '../viewmodels/useAppViewModel';
 
 export default function CreateAppOnboarding() {
   const navigate = useNavigate();
@@ -12,7 +12,7 @@ export default function CreateAppOnboarding() {
     handleBack,
     handleGenerate,
     handleSubmit
-  } = useCreateAppViewModel();
+  } = useAppViewModel('create');
 
   return (
     <div className="onboarding-container">

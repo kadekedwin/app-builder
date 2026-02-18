@@ -1,7 +1,6 @@
 import { createRequire } from 'node:module';
 import path from 'path';
 import { app } from 'electron';
-import { App, CreateAppPayload } from '../../shared/types';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -45,23 +44,5 @@ export function initDB() {
   }
 }
 
-
-export function getApps(): App[] {
-  return db.prepare('SELECT * FROM app ORDER BY created_at DESC').all() as App[];
-}
-
-export function createApp(app: CreateAppPayload) {
-  const stmt = db.prepare('INSERT INTO app (name, description, target_audience, goal, status) VALUES (@name, @description, @target_audience, @goal, \'generating\')');
-  return stmt.run(app);
-}
-
-export function updateAppStatus(id: number, status: 'generating' | 'ready' | 'error') {
-  const stmt = db.prepare('UPDATE app SET status = @status, updated_at = CURRENT_TIMESTAMP WHERE id = @id');
-  return stmt.run({ id, status });
-}
-
-export function getAppById(id: number) {
-  return db.prepare('SELECT * FROM app WHERE id = @id').get({ id });
-}
 
 export default db;
