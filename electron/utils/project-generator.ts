@@ -3,13 +3,13 @@ import path from 'path';
 import OpenAI from 'openai';
 import { app } from 'electron';
 import { appRepository } from '../repositories/AppRepository';
-import { API_KEY } from '../services/ai-service';
 import { CreateAppPayload } from '../../shared/types/app';
 
 export async function generateProject(appId: number, appDetails: CreateAppPayload, apiKey?: string) {
+  const effectiveApiKey = apiKey || process.env.OPENROUTER_API_KEY;
   const openai = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
-    apiKey: apiKey || API_KEY,
+    apiKey: effectiveApiKey,
   });
 
   const appPath = path.join(app.getPath('userData'), 'apps', appId.toString());
@@ -46,7 +46,7 @@ export async function generateProject(appId: number, appDetails: CreateAppPayloa
     console.log(`Generating project for app ${appId} using model: arcee-ai/trinity-large-preview:free`);
     
     // Validate API Key
-    if (!apiKey) {
+    if (!effectiveApiKey) {
       console.error('API Key is missing!');
       throw new Error('API Key is missing');
     }

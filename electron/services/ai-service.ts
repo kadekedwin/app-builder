@@ -1,13 +1,20 @@
 import OpenAI from 'openai';
 
-// Hardcoded for now as per instructions
-export const API_KEY = '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';
+let openai: OpenAI | null = null;
 
-const openai = new OpenAI({
-  baseURL: 'https://openrouter.ai/api/v1',
-  apiKey: API_KEY,
-});
-
+function getOpenAI() {
+  if (!openai) {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      console.warn('OPENROUTER_API_KEY is not set in environment variables');
+    }
+    openai = new OpenAI({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: apiKey,
+    });
+  }
+  return openai;
+}
 export interface GeneratedAppIdea {
   name: string;
   description: string;
@@ -16,7 +23,7 @@ export interface GeneratedAppIdea {
 }
 
 export async function generateAppIdea(): Promise<GeneratedAppIdea> {
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: 'arcee-ai/trinity-large-preview:free',
     messages: [
       {

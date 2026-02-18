@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { app, BrowserWindow } from "electron";
 import { initDB } from "./database/index";
 import { setupIPC } from "./ipc/index";
