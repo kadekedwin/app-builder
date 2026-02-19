@@ -6,8 +6,6 @@ Use Electron IPC (not websocket):
 
 - BLE request channel: `bluetooth:ble:action`
 - BLE event channel: `bluetooth:ble:event`
-- Classic request channel: `bluetooth:classic:action`
-- Classic event channel: `bluetooth:classic:event`
 
 Send a BLE action:
 
@@ -18,32 +16,20 @@ const result = await window.ipcRenderer.invoke('bluetooth:ble:action', {
 });
 ```
 
-Send a Classic action:
-
-```js
-const result = await window.ipcRenderer.invoke('bluetooth:classic:action', {
-  action: 'status.get',
-  payload: {},
-});
-```
-
-Listen for BLE and Classic events separately:
+Listen for BLE events:
 
 ```js
 window.ipcRenderer.on('bluetooth:ble:event', (_event, event) => {
   console.log('ble', event.type, event.payload);
 });
-window.ipcRenderer.on('bluetooth:classic:event', (_event, event) => {
-  console.log('classic', event.type, event.payload);
-});
 ```
 
-Response shape (both channels):
+Response shape:
 
 ```json
 {
   "ok": true,
-  "endpoint": "classic",
+  "endpoint": "ble",
   "action": "status.get",
   "payload": {}
 }
@@ -80,31 +66,17 @@ export default {
 
 ## Bluetooth Repository (IPC)
 
-Bluetooth is split by protocol end-to-end (service, repository, IPC, and UI):
+Bluetooth is BLE-only end-to-end (service, repository, IPC, and UI):
 
 - BLE service: `electron/services/ble-bluetooth-service.ts`
-- Classic service: `electron/services/classic-bluetooth-service.ts`
 - BLE repository: `electron/repositories/BleBluetoothRepository.ts`
-- Classic repository: `electron/repositories/ClassicBluetoothRepository.ts`
 - BLE IPC: `electron/ipc/bluetooth-ble.ts`
-- Classic IPC: `electron/ipc/bluetooth-classic.ts`
 
 ### Adapter note
 
-BLE scan/connect needs `@abandonware/noble`.  
-Classic scan/connect needs `node-bluetooth-serial-port` on Linux/Windows.
-On macOS, Classic runs in info-only mode (list known/paired/connected devices) and cannot open RFCOMM socket connections.
+BLE scan/connect needs `@abandonware/noble`.
 
 ### Action format (BLE)
-
-```json
-{
-  "action": "status.get",
-  "payload": {}
-}
-```
-
-### Action format (Classic)
 
 ```json
 {
@@ -124,32 +96,15 @@ On macOS, Classic runs in info-only mode (list known/paired/connected devices) a
 - `device.disconnect` payload: `{ "id": "device-id" }`
 - `data.send` payload: `{ "id": "device-id", "serviceUuid": "....", "characteristicUuid": "....", "content": "text", "encoding": "utf8|hex|base64", "withResponse": true, "chunkSize": 180, "appendNewline": false }` (BLE GATT write)
 
-### Supported Classic actions
-
-- `ping`
-- `status.get`
-- `devices.list`
-- `scan.start`
-- `scan.stop`
-- `device.connect` payload: `{ "id": "device-id" }`
-- `device.disconnect` payload: `{ "id": "device-id" }`
-- `data.send` payload: `{ "id": "device-id", "content": "text", "encoding": "utf8|hex|base64" }` (Classic RFCOMM write; not supported in macOS fallback mode)
-
 ### Minimal renderer example
 
 ```js
 window.ipcRenderer.invoke('bluetooth:ble:action', {
   action: 'status.get',
 });
-window.ipcRenderer.invoke('bluetooth:classic:action', {
-  action: 'status.get',
-});
 
 window.ipcRenderer.on('bluetooth:ble:event', (_event, payload) => {
   console.log('ble', payload);
-});
-window.ipcRenderer.on('bluetooth:classic:event', (_event, payload) => {
-  console.log('classic', payload);
 });
 ```
 
@@ -165,4 +120,3 @@ It includes buttons for:
 - `scan.start`, `scan.stop`, `devices.list`, `device.connect`, `device.disconnect`
 - pair helper guidance
 - `data.send` for BLE (requires service/characteristic UUIDs)
-- `data.send` for Classic (RFCOMM)

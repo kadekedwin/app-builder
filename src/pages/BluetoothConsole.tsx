@@ -12,7 +12,6 @@ import {
   Unplug,
 } from 'lucide-react';
 import { bleBluetoothApi, type BleEvent } from '../api/bluetooth-ble-api';
-import { classicBluetoothApi, type ClassicEvent } from '../api/bluetooth-classic-api';
 
 interface DeviceItem {
   id: string;
@@ -23,7 +22,7 @@ interface DeviceItem {
 
 interface ActionResponse {
   ok: boolean;
-  endpoint: 'ble' | 'classic';
+  endpoint: 'ble';
   action: string;
   payload?: unknown;
   error?: {
@@ -38,12 +37,8 @@ export default function BluetoothConsole() {
   const navigate = useNavigate();
 
   const [bleDevices, setBleDevices] = useState<DeviceItem[]>([]);
-  const [classicDevices, setClassicDevices] = useState<DeviceItem[]>([]);
   const [bleSelectedDeviceId, setBleSelectedDeviceId] = useState('');
-  const [classicSelectedDeviceId, setClassicSelectedDeviceId] = useState('');
-
   const [bleStatus, setBleStatus] = useState<unknown>(null);
-  const [classicStatus, setClassicStatus] = useState<unknown>(null);
 
   const [allowDuplicates, setAllowDuplicates] = useState(true);
   const [serviceUuids, setServiceUuids] = useState('');
@@ -53,31 +48,22 @@ export default function BluetoothConsole() {
   const [bleDataWithResponse, setBleDataWithResponse] = useState(true);
   const [bleDataChunkSize, setBleDataChunkSize] = useState('180');
   const [bleDataContent, setBleDataContent] = useState('Hello from BLE device');
-  const [classicDataEncoding, setClassicDataEncoding] = useState<'utf8' | 'hex' | 'base64'>('utf8');
-  const [classicDataContent, setClassicDataContent] = useState('Hello from Classic device');
 
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
 
   useEffect(() => {
-    const unsubBle = bleBluetoothApi.onEvent((event) => {
+    const unsubscribe = bleBluetoothApi.onEvent((event) => {
       pushLog(`[event:ble] ${event.type} ${safeJson(event.payload)}`);
       applyBleEvent(event);
     });
 
-    const unsubClassic = classicBluetoothApi.onEvent((event) => {
-      pushLog(`[event:classic] ${event.type} ${safeJson(event.payload)}`);
-      applyClassicEvent(event);
-    });
-
     return () => {
-      unsubBle();
-      unsubClassic();
+      unsubscribe();
     };
   }, []);
 
   const sortedBleDevices = useMemo(() => sortDevices(bleDevices), [bleDevices]);
-  const sortedClassicDevices = useMemo(() => sortDevices(classicDevices), [classicDevices]);
 
   const invokeBle = async (action: string, payload?: unknown): Promise<ActionResponse> => {
     setBusyAction(`ble:${action}`);
@@ -90,25 +76,6 @@ export default function BluetoothConsole() {
         }
         if (action === 'status.get') {
           setBleStatus(response.payload ?? null);
-        }
-      }
-      return response;
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const invokeClassic = async (action: string, payload?: unknown): Promise<ActionResponse> => {
-    setBusyAction(`classic:${action}`);
-    try {
-      const response = (await classicBluetoothApi.invoke({ action, payload })) as ActionResponse;
-      handleActionResponse(response);
-      if (response.ok) {
-        if (action === 'devices.list' && Array.isArray(response.payload)) {
-          setClassicDevices(fromUnknownDevices(response.payload));
-        }
-        if (action === 'status.get') {
-          setClassicStatus(response.payload ?? null);
         }
       }
       return response;
@@ -176,44 +143,12 @@ export default function BluetoothConsole() {
     });
   };
 
-  const onClassicConnect = () => {
-    if (!classicSelectedDeviceId) {
-      alert('Select Classic device first.');
-      return;
-    }
-
-    void invokeClassic('device.connect', { id: classicSelectedDeviceId });
-  };
-
-  const onClassicDisconnect = () => {
-    if (!classicSelectedDeviceId) {
-      alert('Select Classic device first.');
-      return;
-    }
-
-    void invokeClassic('device.disconnect', { id: classicSelectedDeviceId });
-  };
-
-  const onClassicSendData = () => {
-    if (!classicSelectedDeviceId) {
-      alert('Select Classic device first.');
-      return;
-    }
-    if (!classicDataContent.trim()) {
-      alert('Classic data payload cannot be empty.');
-      return;
-    }
-
-    void invokeClassic('data.send', {
-      id: classicSelectedDeviceId,
-      content: classicDataContent,
-      encoding: classicDataEncoding,
-    });
-  };
-
   const applyBleEvent = (event: BleEvent) => {
     if (event.type === 'device.discovered' || event.type === 'device.updated') {
-      if (!isDeviceLike(event.payload)) return;
+      if (!isDeviceLike(event.payload)) {
+        return;
+      }
+
       const device = normalizeDevice(event.payload);
       setBleDevices((prev) => upsertDevice(prev, device));
       return;
@@ -222,20 +157,6 @@ export default function BluetoothConsole() {
     if (event.type === 'device.disconnected' && isDeviceIdPayload(event.payload)) {
       const { id } = event.payload;
       setBleDevices((prev) => markDisconnected(prev, id));
-    }
-  };
-
-  const applyClassicEvent = (event: ClassicEvent) => {
-    if (event.type === 'device.discovered' || event.type === 'device.updated') {
-      if (!isDeviceLike(event.payload)) return;
-      const device = normalizeDevice(event.payload);
-      setClassicDevices((prev) => upsertDevice(prev, device));
-      return;
-    }
-
-    if (event.type === 'device.disconnected' && isDeviceIdPayload(event.payload)) {
-      const { id } = event.payload;
-      setClassicDevices((prev) => markDisconnected(prev, id));
     }
   };
 
@@ -255,7 +176,7 @@ export default function BluetoothConsole() {
     setLogs((prev) => [stamped, ...prev].slice(0, LOG_LIMIT));
   };
 
-  const isBusy = (endpoint: 'ble' | 'classic', action: string) => busyAction === `${endpoint}:${action}`;
+  const isBusy = (action: string) => busyAction === `ble:${action}`;
 
   return (
     <div className="container">
@@ -267,10 +188,10 @@ export default function BluetoothConsole() {
           <div>
             <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
               <Bluetooth size={22} />
-              Bluetooth Console
+              BLE Console
             </h1>
             <p style={{ color: 'var(--color-text-secondary)' }}>
-              BLE and Classic are fully separated (service, repository, IPC, and UI list).
+              BLE service, repository, IPC, and UI controls.
             </p>
           </div>
         </div>
@@ -303,19 +224,19 @@ export default function BluetoothConsole() {
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginBottom: '1rem' }}>
-            <button className="btn-secondary" onClick={() => void invokeBle('ping')} disabled={isBusy('ble', 'ping')}>
+            <button className="btn-secondary" onClick={() => void invokeBle('ping')} disabled={isBusy('ping')}>
               <RefreshCcw size={15} /> Ping
             </button>
-            <button className="btn-secondary" onClick={() => void invokeBle('status.get')} disabled={isBusy('ble', 'status.get')}>
+            <button className="btn-secondary" onClick={() => void invokeBle('status.get')} disabled={isBusy('status.get')}>
               Status
             </button>
-            <button className="btn-primary" onClick={onBleScanStart} disabled={isBusy('ble', 'scan.start')}>
+            <button className="btn-primary" onClick={onBleScanStart} disabled={isBusy('scan.start')}>
               <Play size={15} /> Scan Start
             </button>
-            <button className="btn-secondary" onClick={() => void invokeBle('scan.stop')} disabled={isBusy('ble', 'scan.stop')}>
+            <button className="btn-secondary" onClick={() => void invokeBle('scan.stop')} disabled={isBusy('scan.stop')}>
               <Square size={15} /> Scan Stop
             </button>
-            <button className="btn-secondary" onClick={() => void invokeBle('devices.list')} disabled={isBusy('ble', 'devices.list')}>
+            <button className="btn-secondary" onClick={() => void invokeBle('devices.list')} disabled={isBusy('devices.list')}>
               Devices List
             </button>
             <button className="btn-secondary" onClick={() => alert('BLE pairing is device-dependent. Scan then connect.')}>
@@ -337,10 +258,10 @@ export default function BluetoothConsole() {
               ))}
             </select>
 
-            <button className="btn-primary" onClick={onBleConnect} disabled={isBusy('ble', 'device.connect')}>
+            <button className="btn-primary" onClick={onBleConnect} disabled={isBusy('device.connect')}>
               <Plug size={15} /> Connect
             </button>
-            <button className="btn-secondary" onClick={onBleDisconnect} disabled={isBusy('ble', 'device.disconnect')}>
+            <button className="btn-secondary" onClick={onBleDisconnect} disabled={isBusy('device.disconnect')}>
               <Unplug size={15} /> Disconnect
             </button>
           </div>
@@ -406,95 +327,10 @@ export default function BluetoothConsole() {
               rows={4}
               style={{ marginBottom: '0.6rem' }}
             />
-            <button className="btn-primary" onClick={onBleSendData} disabled={isBusy('ble', 'data.send')}>
+            <button className="btn-primary" onClick={onBleSendData} disabled={isBusy('data.send')}>
               Send Data
             </button>
           </div>
-        </div>
-
-        <div style={{ background: 'white', border: '1px solid var(--color-border)', borderRadius: 12, padding: '1rem' }}>
-          <h3 style={{ marginBottom: '0.75rem' }}>Classic</h3>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginBottom: '1rem' }}>
-            <button className="btn-secondary" onClick={() => void invokeClassic('ping')} disabled={isBusy('classic', 'ping')}>
-              <RefreshCcw size={15} /> Ping
-            </button>
-            <button className="btn-secondary" onClick={() => void invokeClassic('status.get')} disabled={isBusy('classic', 'status.get')}>
-              Status
-            </button>
-            <button className="btn-primary" onClick={() => void invokeClassic('scan.start')} disabled={isBusy('classic', 'scan.start')}>
-              <Play size={15} /> Scan Start
-            </button>
-            <button className="btn-secondary" onClick={() => void invokeClassic('scan.stop')} disabled={isBusy('classic', 'scan.stop')}>
-              <Square size={15} /> Scan Stop
-            </button>
-            <button className="btn-secondary" onClick={() => void invokeClassic('devices.list')} disabled={isBusy('classic', 'devices.list')}>
-              Devices List
-            </button>
-            <button
-              className="btn-secondary"
-              onClick={() =>
-                alert('Pair classic devices from OS Bluetooth settings first, then scan/list/connect here.')
-              }
-            >
-              <Link size={15} /> Pair Help
-            </button>
-          </div>
-
-          <div className="bluetooth-device-row">
-            <select
-              value={classicSelectedDeviceId}
-              onChange={(e) => setClassicSelectedDeviceId(e.target.value)}
-              style={{ padding: '0.6rem', borderRadius: 8, border: '1px solid var(--color-border)' }}
-            >
-              <option value="">Select Classic device</option>
-              {sortedClassicDevices.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name ?? 'Unnamed'} ({device.address}){device.connected ? ' [connected]' : ''}
-                </option>
-              ))}
-            </select>
-
-            <button className="btn-primary" onClick={onClassicConnect} disabled={isBusy('classic', 'device.connect')}>
-              <Plug size={15} /> Connect
-            </button>
-            <button className="btn-secondary" onClick={onClassicDisconnect} disabled={isBusy('classic', 'device.disconnect')}>
-              <Unplug size={15} /> Disconnect
-            </button>
-          </div>
-
-          <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
-            <h3 style={{ marginBottom: '0.6rem', fontSize: '1rem' }}>
-              <Printer size={16} style={{ display: 'inline', marginRight: 8 }} />
-              Classic Data Send (RFCOMM)
-            </h3>
-            <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
-              <label style={{ marginBottom: 0 }}>
-                Encoding
-                <select
-                  value={classicDataEncoding}
-                  onChange={(e) =>
-                    setClassicDataEncoding(e.target.value as 'utf8' | 'hex' | 'base64')
-                  }
-                  style={{ padding: '0.6rem', borderRadius: 8, border: '1px solid var(--color-border)', marginLeft: 8 }}
-                >
-                  <option value="utf8">utf8</option>
-                  <option value="hex">hex</option>
-                  <option value="base64">base64</option>
-                </select>
-              </label>
-            </div>
-            <textarea
-              value={classicDataContent}
-              onChange={(e) => setClassicDataContent(e.target.value)}
-              rows={4}
-              style={{ marginBottom: '0.6rem' }}
-            />
-            <button className="btn-primary" onClick={onClassicSendData} disabled={isBusy('classic', 'data.send')}>
-              Send Data
-            </button>
-          </div>
-
         </div>
       </div>
 
@@ -502,9 +338,6 @@ export default function BluetoothConsole() {
         <div style={{ background: 'white', border: '1px solid var(--color-border)', borderRadius: 12, padding: '1rem' }}>
           <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem' }}>BLE Status</h3>
           <pre style={statusBlockStyle}>{bleStatus ? safeJson(bleStatus) : 'No BLE status yet'}</pre>
-
-          <h3 style={{ marginTop: '0.75rem', marginBottom: '0.5rem', fontSize: '1rem' }}>Classic Status</h3>
-          <pre style={statusBlockStyle}>{classicStatus ? safeJson(classicStatus) : 'No Classic status yet'}</pre>
         </div>
 
         <div style={{ background: 'white', border: '1px solid var(--color-border)', borderRadius: 12, padding: '1rem' }}>
