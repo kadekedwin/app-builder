@@ -1,4 +1,10 @@
-import { App, CreateAppPayload } from '../../shared/types/app';
+import {
+  App,
+  AppBriefRequest,
+  CreateAppPayload,
+  DiscoveryQuestion,
+  GeneratedAppBrief
+} from '../../shared/types/app';
 
 export const appApi = {
   getApps: async (): Promise<App[]> => {
@@ -24,6 +30,16 @@ export const appApi = {
   generateAppIdea: async (): Promise<any> => {
     // @ts-ignore
     return window.ipcRenderer.invoke('generate-app-idea');
+  },
+
+  generateAppDiscoveryQuestions: async (projectIdea: string): Promise<DiscoveryQuestion[]> => {
+    // @ts-ignore
+    return window.ipcRenderer.invoke('generate-app-discovery-questions', projectIdea);
+  },
+
+  generateAppBrief: async (payload: AppBriefRequest): Promise<GeneratedAppBrief> => {
+    // @ts-ignore
+    return window.ipcRenderer.invoke('generate-app-brief', payload);
   },
 
   regenerateApp: async (app: App): Promise<boolean> => {

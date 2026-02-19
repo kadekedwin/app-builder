@@ -19,28 +19,40 @@ export async function generateProject(appId: number, appDetails: CreateAppPayloa
     fs.mkdirSync(appPath, { recursive: true });
   }
 
+  const discoveryAnswers = appDetails.discovery_answers
+    ?.map((item, index) => `${index + 1}. ${item.question}\nAnswer: ${item.answer}`)
+    .join('\n\n');
+
   const prompt = `
-    You are an expert Electron.js developer.
-    Generate a simple, functional Electron application based on this description:
-    "${appDetails.description}"
-    Goal: "${appDetails.goal}"
-    Target Audience: "${appDetails.target_audience}"
-    
-    You need to generate the following files:
-    1. package.json (name should be the sanitized app name, main: "main.js")
-    2. main.js (basic electron main process)
-    3. index.html (beautiful, modern UI, dark mode, using the description)
-    4. renderer.js (logic for the index.html)
-    
-    Return ONLY a raw JSON object where keys are filenames and values are the file content.
-    Example:
-    {
-      "package.json": "...",
-      "main.js": "..."
-    }
-    
-    Do not include markdown formatting.
-  `;
+You are an expert Electron.js product engineer.
+Generate a detailed, high-quality, fully functional desktop application.
+
+App Name: "${appDetails.name}"
+Product Description: "${appDetails.description}"
+Primary Goal: "${appDetails.goal}"
+Target Audience: "${appDetails.target_audience}"
+Original User Idea: "${appDetails.original_prompt ?? ''}"
+Detailed Requirements: "${appDetails.detailed_requirements ?? ''}"
+Discovery Answers:
+${discoveryAnswers || 'None provided'}
+
+Implementation requirements:
+1. Build a polished app that directly implements the requirements and business rules.
+2. Include complete working flows, not placeholders.
+3. Use clean HTML, CSS, and vanilla JS in renderer.
+4. Support edge cases and input validation for critical user actions.
+5. Keep data in memory unless persistence is needed by requirements.
+
+Generate the following files at minimum:
+1. package.json (name should be sanitized app name, main: "main.js")
+2. main.js (electron main process)
+3. index.html (structured and modern UI)
+4. styles.css (clear, maintainable styling)
+5. renderer.js (all application logic and interactions)
+
+Return ONLY a raw JSON object where keys are filenames and values are file contents.
+Do not include markdown formatting.
+`;
 
   try {
     console.log(`Generating project for app ${appId} using model: arcee-ai/trinity-large-preview:free`);

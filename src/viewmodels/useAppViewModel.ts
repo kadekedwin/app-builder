@@ -1,15 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { App, CreateAppPayload } from '../../shared/types/app';
+import { App, CreateAppPayload, DiscoveryAnswer, DiscoveryQuestion } from '../../shared/types/app';
 import { appApi } from '../api/app-api';
 
 export type ViewModelMode = 'list' | 'create';
 
 interface FormData {
-  name: string;
-  description: string;
-  targetAudience: string;
-  goal: string;
+  projectIdea: string;
+  answers: Record<string, string>;
 }
 
 export function useAppViewModel(mode: ViewModelMode = 'list') {
@@ -22,11 +20,10 @@ export function useAppViewModel(mode: ViewModelMode = 'list') {
   // Create State
   const [step, setStep] = useState(1);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [discoveryQuestions, setDiscoveryQuestions] = useState<DiscoveryQuestion[]>([]);
   const [formData, setFormData] = useState<FormData>({
-    name: '',
-    description: '',
-    targetAudience: '',
-    goal: '',
+    projectIdea: '',
+    answers: {},
   });
 
   // --- List Logic ---
@@ -63,8 +60,46 @@ export function useAppViewModel(mode: ViewModelMode = 'list') {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleNext = () => {
-    setStep(step + 1);
+  const handleAnswerChange = (questionId: string, answer: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      answers: {
+        ...prev.answers,
+        [questionId]: answer
+      }
+    }));
+  };
+
+  const handleNext = async () => {
+    if (step !== 1) {
+      setStep(step + 1);
+      return;
+    }
+
+    if (!formData.projectIdea.trim()) {
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const questions = await appApi.generateAppDiscoveryQuestions(formData.projectIdea.trim());
+      const nextAnswers = questions.reduce((acc, question) => {
+        acc[question.id] = formData.answers[question.id] ?? '';
+        return acc;
+      }, {} as Record<string, string>);
+
+      setDiscoveryQuestions(questions);
+      setFormData((prev) => ({
+        ...prev,
+        answers: nextAnswers
+      }));
+      setStep(2);
+    } catch (error) {
+      console.error('Failed to generate discovery questions:', error);
+      alert('Failed to generate follow-up questions. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleBack = () => {
@@ -76,11 +111,11 @@ export function useAppViewModel(mode: ViewModelMode = 'list') {
     try {
       const idea = await appApi.generateAppIdea();
       setFormData({
-        name: idea.name,
-        description: idea.description,
-        targetAudience: idea.targetAudience,
-        goal: idea.goal,
+        projectIdea: `${idea.name}: ${idea.description}\nTarget audience: ${idea.targetAudience}\nMain goal: ${idea.goal}`,
+        answers: {},
       });
+      setStep(1);
+      setDiscoveryQuestions([]);
     } catch (error) {
       console.error('Failed to generate app idea:', error);
       alert('Failed to generate app idea. Please try again.');
@@ -89,21 +124,46 @@ export function useAppViewModel(mode: ViewModelMode = 'list') {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const payload: CreateAppPayload = {
-      name: formData.name,
-      description: formData.description,
-      target_audience: formData.targetAudience,
-      goal: formData.goal,
-    };
+  const handleSubmit = async (e?: React.SyntheticEvent) => {
+    e?.preventDefault();
+
+    const answers: DiscoveryAnswer[] = discoveryQuestions.map((question) => ({
+      id: question.id,
+      question: question.question,
+      answer: (formData.answers[question.id] ?? '').trim(),
+    }));
+
+    const hasEmptyAnswers = answers.some((answer) => !answer.answer);
+    if (hasEmptyAnswers) {
+      alert('Please answer all follow-up questions so the app can be generated in detail.');
+      return;
+    }
 
     try {
-        await appApi.createApp(payload);
-        navigate('/');
+      setIsGenerating(true);
+
+      const brief = await appApi.generateAppBrief({
+        projectIdea: formData.projectIdea.trim(),
+        answers,
+      });
+
+      const payload: CreateAppPayload = {
+        name: brief.name,
+        description: brief.description,
+        target_audience: brief.targetAudience,
+        goal: brief.goal,
+        detailed_requirements: brief.detailedRequirements,
+        original_prompt: formData.projectIdea.trim(),
+        discovery_answers: answers
+      };
+
+      await appApi.createApp(payload);
+      navigate('/');
     } catch (error) {
-        console.error("Failed to create app:", error);
-        alert("Failed to create app.");
+      console.error('Failed to create app:', error);
+      alert('Failed to create app.');
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -121,8 +181,10 @@ export function useAppViewModel(mode: ViewModelMode = 'list') {
     // Create
     step,
     isGenerating,
+    discoveryQuestions,
     formData,
     handleChange,
+    handleAnswerChange,
     handleNext,
     handleBack,
     handleGenerate,
